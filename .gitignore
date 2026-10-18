@@ -1,0 +1,14 @@
+node_modules/
+dist/
+tmp/
+results/
+*.log
+AGENTS.md
+.env
+.env.*
+*.pfx
+*.p12
+accounts.json
+state.json
+draft.json
+mail-cache/

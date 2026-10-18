@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>我的邮件</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header id="titlebar"><span>我的邮件</span></header>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="acct-head" id="acct-head"></div>
+      <div class="side-actions">
+        <button class="side-btn primary" id="btn-compose"></button>
+        <button class="side-btn" id="btn-search"></button>
+        <button class="side-btn" id="btn-settings"></button>
+      </div>
+      <nav id="nav"></nav>
+      <div class="side-foot" id="side-foot"></div>
+    </aside>
+    <div class="pane-divider" id="sidebar-divider" role="separator" aria-orientation="vertical" aria-label="调整邮箱栏宽度" tabindex="0"></div>
+
+    <section id="list-pane">
+      <header class="pane-head">
+        <h2 id="list-title">收件箱</h2>
+        <div class="head-btns">
+          <button class="icon-btn" id="btn-unread" title="只看未读"></button>
+          <button class="icon-btn" id="btn-refresh" title="刷新"></button>
+        </div>
+      </header>
+      <div class="search-row" id="search-row" hidden>
+        <input id="search-input" type="search" placeholder="搜索主题、发件人、收件人（回车）" />
+      </div>
+      <div id="list" tabindex="-1"></div>
+    </section>
+
+    <div class="pane-divider" id="list-divider" role="separator" aria-orientation="vertical" aria-label="调整邮件列表宽度" tabindex="0"></div>
+    <section id="read-pane"></section>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toast" hidden></div>
+  <script src="mail-actions.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

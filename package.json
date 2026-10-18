@@ -1,0 +1,41 @@
+{
+  "name": "my-mail",
+  "version": "0.1.0",
+  "description": "个人邮件客户端：无广告、IMAP IDLE 即时通知",
+  "author": "yuzhounh",
+  "license": "UNLICENSED",
+  "repository": { "type": "git", "url": "https://github.com/yuzhounh/my-mail.git" },
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node scripts/check.js",
+    "dist:win": "electron-builder --win portable nsis --x64 --publish never"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.0",
+    "imapflow": "^1.0.190",
+    "jsdom": "^26.0.0",
+    "mailparser": "^3.7.2",
+    "nodemailer": "^6.9.16"
+  },
+  "build": {
+    "appId": "com.personal.mymail",
+    "productName": "My Mail",
+    "directories": { "output": "dist" },
+    "files": ["src/**/*", "assets/icon.png", "assets/icon.ico", "package.json"],
+    "asar": true,
+    "electronDist": "node_modules/electron/dist",
+    "win": { "icon": "assets/icon.ico", "executableName": "MyMail", "requestedExecutionLevel": "asInvoker" },
+    "portable": { "artifactName": "MyMail-${version}-win-${arch}.exe", "requestExecutionLevel": "user" },
+    "nsis": {
+      "artifactName": "MyMail-Setup-${version}-${arch}.exe",
+      "oneClick": false, "perMachine": false, "allowElevation": false,
+      "allowToChangeInstallationDirectory": true, "deleteAppDataOnUninstall": false,
+      "runAfterFinish": false, "createDesktopShortcut": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "26.0.12"
+  }
+}
