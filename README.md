@@ -1,7 +1,7 @@
 <p align="center"><img src="assets/icon.png" width="88" alt="Light Mail"></p>
 <h1 align="center">Light Mail</h1>
 <p align="center">无广告的 Windows 邮件客户端，支持多邮箱、即时通知、本地缓存与自动保存草稿。</p>
-<p align="center"><a href="https://github.com/yuzhounh/my-mail/releases/latest">下载 Windows 版本</a></p>
+<p align="center"><a href="https://github.com/yuzhounh/light-mail/releases/latest">下载 Windows 版本</a></p>
 
 ![Light Mail 界面示意图](assets/screenshot.png)
 
@@ -9,7 +9,7 @@
 
 ## 下载与运行
 
-在 [Releases](https://github.com/yuzhounh/my-mail/releases/latest) 下载：
+在 [Releases](https://github.com/yuzhounh/light-mail/releases/latest) 下载：
 
 - `LightMail-0.1.1-win-x64.exe`：单文件便携版，双击运行，无需安装 Node.js。
 - `LightMail-Setup-0.1.1-x64.exe`：安装版，可选择安装目录、创建快捷方式；安装完成后由用户自行启动。
