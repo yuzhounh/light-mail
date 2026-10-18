@@ -6,6 +6,7 @@ const cache = require('./cache');
 const mail = require('./mail');
 
 app.setAppUserModelId('com.personal.mymail');
+app.setName('Light Mail');
 const smokeOutput = process.argv.find((arg) => arg.startsWith('--smoke-test='))?.slice(13);
 // 打包前后保持相同数据目录；发布验证使用独立空目录，避免访问真实邮箱。
 app.setPath('userData', smokeOutput ? path.join(path.dirname(path.resolve(smokeOutput)), 'smoke-profile') : path.join(app.getPath('appData'), 'my-mail'));
@@ -41,7 +42,7 @@ function createWindow() {
     height: 840,
     minWidth: 900,
     minHeight: 560,
-    title: '我的邮件',
+    title: 'Light Mail',
     show: !smokeOutput,
     icon,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#202837' : '#eff4fc',
@@ -108,11 +109,11 @@ function openComposeWindow(init = {}, resume = false) {
 
 function createTray() {
   tray = new Tray(icon.resize({ width: 32, height: 32 }));
-  tray.setToolTip('我的邮件');
+  tray.setToolTip('Light Mail');
   tray.on('click', showWindow);
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: '打开我的邮件', click: showWindow },
+      { label: '打开 Light Mail', click: showWindow },
       {
         label: '写邮件',
         click: () => {
@@ -241,8 +242,8 @@ const api = {
   },
   'external:open': (url) => openExternal(url),
   'app:unread': (n) => {
-    tray?.setToolTip(n > 0 ? `我的邮件 · ${n} 封未读` : '我的邮件');
-    if (win && !win.isDestroyed()) win.setTitle(n > 0 ? `(${n}) 我的邮件` : '我的邮件');
+    tray?.setToolTip(n > 0 ? `Light Mail · ${n} 封未读` : 'Light Mail');
+    if (win && !win.isDestroyed()) win.setTitle(n > 0 ? `(${n}) Light Mail` : 'Light Mail');
     return true;
   },
   'settings:get': () => ({ ...store.getSettings(), autoStart: app.getLoginItemSettings().openAtLogin }),

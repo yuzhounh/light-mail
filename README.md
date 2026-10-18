@@ -1,14 +1,18 @@
-<p align="center"><img src="assets/icon.png" width="88" alt="My Mail"></p>
-<h1 align="center">My Mail · 我的邮件</h1>
+<p align="center"><img src="assets/icon.png" width="88" alt="Light Mail"></p>
+<h1 align="center">Light Mail</h1>
 <p align="center">无广告的 Windows 邮件客户端，支持多邮箱、即时通知、本地缓存与自动保存草稿。</p>
-<p align="center"><a href="https://github.com/yuzhounh/my-mail/releases/latest">下载 Windows 版本</a> · <a href="https://yuzhounh.github.io/#vibes">个人主页</a></p>
+<p align="center"><a href="https://github.com/yuzhounh/my-mail/releases/latest">下载 Windows 版本</a></p>
+
+![Light Mail 界面示意图](assets/screenshot.png)
+
+*截图使用示例邮件与账户，不包含真实邮件数据。*
 
 ## 下载与运行
 
 在 [Releases](https://github.com/yuzhounh/my-mail/releases/latest) 下载：
 
-- `MyMail-0.1.0-win-x64.exe`：单文件便携版，双击运行，无需安装 Node.js。
-- `MyMail-Setup-0.1.0-x64.exe`：安装版，可选择安装目录、创建快捷方式；安装完成后由用户自行启动。
+- `LightMail-0.1.1-win-x64.exe`：单文件便携版，双击运行，无需安装 Node.js。
+- `LightMail-Setup-0.1.1-x64.exe`：安装版，可选择安装目录、创建快捷方式；安装完成后由用户自行启动。
 
 适用于 Windows 10/11 x64。当前发布包未作代码签名。
 

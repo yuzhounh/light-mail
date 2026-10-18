@@ -174,7 +174,7 @@ function renderHead() {
   const a = isUnified() ? null : accById(S.sel.accId);
   const first = S.accounts[0];
   if (!S.accounts.length) {
-    $('acct-head').innerHTML = `${mailboxIcon()}<div class="meta"><div class="name">我的邮件</div><div class="mail">尚未添加账户</div></div>`;
+    $('acct-head').innerHTML = `${mailboxIcon()}<div class="meta"><div class="name">Light Mail</div><div class="mail">尚未添加账户</div></div>`;
   } else if (a || S.accounts.length === 1) {
     const x = a || first;
     $('acct-head').innerHTML = `${mailboxIcon(x.email)}<div class="meta"><div class="name" title="${esc(accountAlias(x))}">${esc(accountAlias(x))}</div><div class="mail" title="${esc(x.email)}">${esc(x.email)}</div></div>`;
