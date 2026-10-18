@@ -11,8 +11,8 @@
 
 在 [Releases](https://github.com/yuzhounh/light-mail/releases/latest) 下载：
 
-- `LightMail-0.1.1-win-x64.exe`：单文件便携版，双击运行，无需安装 Node.js。
-- `LightMail-Setup-0.1.1-x64.exe`：安装版，可选择安装目录、创建快捷方式；安装完成后由用户自行启动。
+- `LightMail-0.1.2-win-x64.exe`：单文件便携版，双击运行，无需安装 Node.js。
+- `LightMail-Setup-0.1.2-x64.exe`：安装版，可选择安装目录、创建快捷方式；安装完成后由用户自行启动。
 
 适用于 Windows 10/11 x64。当前发布包未作代码签名。
 
@@ -54,5 +54,7 @@ npm run dist:win
 ```
 
 Windows 包输出到 `dist/`。可通过 `node scripts/check-drafts.js`、`node scripts/check-mail-actions.js` 等脚本验证草稿与批量操作逻辑，不会发送真实邮件。
+
+构建前会自动移植上游 NSIS 安装目录兼容修复，避免首次安装时的 `System.dll` 崩溃，并正确处理带空格的安装路径。目标程序文件被占用时安装器会停止，需先退出该安装目录中的客户端；不会强制终止进程。
 
 源码位于 `src/main/` 和 `src/renderer/`；图标在 `assets/`；开发和验证脚本在 `scripts/`。第三方组件的许可证随其依赖分发。

@@ -25,7 +25,7 @@ app.whenReady().then(async () => {
       report.accounts.push(row); save();
       const client = new ImapFlow({ host: acc.imap.host, port: acc.imap.port, secure: acc.imap.secure,
         auth: { user: acc.user, pass: acc.pass }, logger: false, socketTimeout: 60000,
-        clientInfo: { name: 'Light Mail', version: '0.1.1', vendor: 'personal' } });
+        clientInfo: { name: 'Light Mail', version: '0.1.2', vendor: 'personal' } });
       client.on('error', () => {});
       try {
         await client.connect();

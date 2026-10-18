@@ -1,6 +1,6 @@
 {
   "name": "my-mail",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "个人邮件客户端：无广告、IMAP IDLE 即时通知",
   "author": "yuzhounh",
   "license": "UNLICENSED",
@@ -19,6 +19,7 @@
     "nodemailer": "^6.9.16"
   },
   "build": {
+    "beforePack": "./scripts/prepare-installer.js",
     "appId": "com.personal.mymail",
     "productName": "Light Mail",
     "directories": { "output": "dist" },
@@ -28,6 +29,7 @@
     "win": { "icon": "assets/icon.ico", "executableName": "LightMail", "requestedExecutionLevel": "asInvoker" },
     "portable": { "artifactName": "LightMail-${version}-win-${arch}.exe", "requestExecutionLevel": "user" },
     "nsis": {
+      "include": "scripts/installer.nsh",
       "artifactName": "LightMail-Setup-${version}-${arch}.exe",
       "oneClick": false, "perMachine": false, "allowElevation": false,
       "allowToChangeInstallationDirectory": true, "deleteAppDataOnUninstall": false,

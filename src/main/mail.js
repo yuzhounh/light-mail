@@ -30,7 +30,7 @@ function newClient(acc) {
     secure: acc.imap.secure,
     auth: { user: acc.user, pass: acc.pass },
     logger: false,
-    clientInfo: { name: 'Light Mail', version: '0.1.1', vendor: 'personal' },
+    clientInfo: { name: 'Light Mail', version: '0.1.2', vendor: 'personal' },
   });
   client.on('error', () => {});
   return client;
