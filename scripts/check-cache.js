@@ -50,7 +50,7 @@ async function main() {
     const bodyFunction = source.slice(source.indexOf('async function openMessage('), source.indexOf('function renderReader()'));
     const requests = [];
     const context = {
-      S: { accounts: [{ id: 'a' }, { id: 'b' }], sel: { accId: null, path: 'INBOX' }, limit: 50, search: '', messages: [], folders: {}, errors: [] },
+      S: { accountsState: 'ready', accounts: [{ id: 'a' }, { id: 'b' }], sel: { accId: null, path: 'INBOX' }, limit: 50, search: '', messages: [], folders: {}, errors: [] },
       listToken: 0, msgToken: 0,
       isUnified: () => context.S.sel.accId === null,
       accById: (id) => ({ email: id }), keyOf: (m) => `${m.accId}|${m.path}|${m.uid}`,

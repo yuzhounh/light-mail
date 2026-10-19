@@ -6,10 +6,13 @@ const crypto = require('crypto');
 
 const file = (name) => path.join(app.getPath('userData'), name);
 
-function readJson(name, fallback) {
+function readJson(name, fallback, strict = false) {
   try {
     return JSON.parse(fs.readFileSync(file(name), 'utf8'));
-  } catch {
+  } catch (error) {
+    if (strict && error.code !== 'ENOENT') {
+      throw Object.assign(new Error('本地账户文件暂时无法读取，请重试；原文件未修改。'), { code: error.code || 'INVALID_JSON' });
+    }
     return fallback;
   }
 }
@@ -36,8 +39,33 @@ function decrypt(value) {
 }
 
 // 内部使用的完整账户（密码已解密）
+function readAccounts() {
+  const missing = Symbol('missing-account-file');
+  let list = readJson('accounts.json', missing, true);
+  if (list === missing) {
+    if (fs.existsSync(file('mail-cache')) || Object.keys(getState().lastUid || {}).length) {
+      throw Object.assign(new Error('已有本地邮件记录，但账户文件暂不可用；请重试，原数据未修改。'), { code: 'ACCOUNTS_MISSING' });
+    }
+    list = [];
+  }
+  if (!Array.isArray(list) || list.some((a) => !a || typeof a.id !== 'string' || typeof a.email !== 'string' || typeof a.pass !== 'string')) {
+    throw Object.assign(new Error('本地账户文件格式异常，原文件未修改。'), { code: 'INVALID_ACCOUNTS' });
+  }
+  return list;
+}
+
+function listAccounts() {
+  return readAccounts().map(publicAccount);
+}
+
+function getAccount(id) {
+  const account = readAccounts().find((a) => a.id === id);
+  if (!account) throw new Error('账户不存在');
+  return { ...account, pass: decrypt(account.pass) };
+}
+
 function getAccounts() {
-  return readJson('accounts.json', []).map((a) => ({ ...a, pass: decrypt(a.pass) }));
+  return readAccounts().map((a) => ({ ...a, pass: decrypt(a.pass) }));
 }
 
 // 给界面看的账户（不含密码）
@@ -47,7 +75,7 @@ function publicAccount(a) {
 }
 
 function saveAccount(acc) {
-  const list = readJson('accounts.json', []);
+  const list = readAccounts();
   const record = { ...acc, id: acc.id || crypto.randomUUID(), pass: encrypt(acc.pass) };
   const i = list.findIndex((a) => a.id === record.id);
   if (i >= 0) list[i] = record;
@@ -58,7 +86,7 @@ function saveAccount(acc) {
 
 function setAccountAlias(id, alias) {
   if (typeof alias !== 'string' || alias.trim().length > 80) throw new Error('邮箱别名最多 80 个字符');
-  const list = readJson('accounts.json', []);
+  const list = readAccounts();
   const record = list.find((a) => a.id === id);
   if (!record) throw new Error('账户不存在');
   record.alias = alias.trim();
@@ -67,7 +95,7 @@ function setAccountAlias(id, alias) {
 }
 
 function removeAccount(id) {
-  writeJson('accounts.json', readJson('accounts.json', []).filter((a) => a.id !== id));
+  writeJson('accounts.json', readAccounts().filter((a) => a.id !== id));
   const st = readJson('state.json', {});
   delete st.lastUid?.[id];
   writeJson('state.json', st);
@@ -121,6 +149,8 @@ function setSettings(patch) {
 }
 
 module.exports = {
+  listAccounts,
+  getAccount,
   getAccounts,
   publicAccount,
   saveAccount,

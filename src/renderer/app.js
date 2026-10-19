@@ -91,6 +91,8 @@ async function guard(fn) {
 // ---------- 状态 ----------
 const S = {
   accounts: [],
+  accountsState: 'loading',
+  accountsError: false,
   folders: {}, // accId -> folders[]
   status: {}, // accId -> online/offline/error/auth
   sel: { accId: null, path: 'INBOX' }, // accId=null 表示所有账户的收件箱
@@ -174,7 +176,8 @@ function renderHead() {
   const a = isUnified() ? null : accById(S.sel.accId);
   const first = S.accounts[0];
   if (!S.accounts.length) {
-    $('acct-head').innerHTML = `${mailboxIcon()}<div class="meta"><div class="name">Light Mail</div><div class="mail">尚未添加账户</div></div>`;
+    const label = S.accountsState === 'ready' ? '尚未添加账户' : S.accountsError ? '账户加载失败，正在重试' : '正在读取本地账户…';
+    $('acct-head').innerHTML = `${mailboxIcon()}<div class="meta"><div class="name">Light Mail</div><div class="mail">${label}</div></div>`;
   } else if (a || S.accounts.length === 1) {
     const x = a || first;
     $('acct-head').innerHTML = `${mailboxIcon(x.email)}<div class="meta"><div class="name" title="${esc(accountAlias(x))}">${esc(accountAlias(x))}</div><div class="mail" title="${esc(x.email)}">${esc(x.email)}</div></div>`;
@@ -189,6 +192,10 @@ function renderHead() {
 }
 
 function renderFoot() {
+  if (S.accountsError || S.accountsState !== 'ready') {
+    $('side-foot').textContent = S.accountsError ? '账户加载失败，正在自动重试…' : '正在读取本地账户…';
+    return;
+  }
   const vals = S.accounts.map((a) => S.status[a.id]);
   let t = '已同步';
   if (!S.accounts.length) t = '';
@@ -214,6 +221,10 @@ function renderList() {
   $('list-title').textContent = S.search ? `搜索：${S.search}` : listTitle();
   $('btn-unread').classList.toggle('on', S.unreadOnly);
   const list = $('list');
+  if (S.accountsState !== 'ready') {
+    list.innerHTML = `<div class="empty">${S.accountsError ? '本地账户加载失败，正在自动重试。<br><br><button class="btn" data-act="retry-accounts">立即重试</button>' : '正在读取本地账户…'}</div>`;
+    return;
+  }
   const keepScroll = list.scrollTop;
   let h = '';
   const selectedCount = selectedMessages().length;
@@ -259,6 +270,7 @@ function renderList() {
 }
 
 async function loadList() {
+  if (S.accountsState !== 'ready') { renderList(); return; }
   const token = ++listToken;
   if (S.sel.path === '@local-drafts') {
     S.loading = false;
@@ -976,9 +988,43 @@ async function openSettings() {
   $('s-tray').onchange = (e) => guard(() => call('settings:set', { closeToTray: e.target.checked }));
 }
 
+let accountRetryTimer;
+let accountRetryDelay = 500;
+let accountLoading = false;
 async function loadAccounts() {
-  const [accounts, settings, draft] = await Promise.all([call('accounts:list'), call('settings:get'), call('draft:get')]);
-  S.accounts = accounts;
+  if (accountLoading) return;
+  accountLoading = true;
+  clearTimeout(accountRetryTimer);
+  try {
+    const accounts = await call('accounts:list');
+    S.accounts = accounts;
+    S.accountsState = 'ready';
+    S.accountsError = false;
+    accountRetryDelay = 500;
+  } catch {
+    S.accountsError = true;
+    // Keep any previously loaded accounts. Failed reads never mean zero accounts.
+    renderHead(); renderList(); renderFoot();
+    call('startup:diagnostic', 'accounts').catch(() => {});
+    accountLoading = false;
+    accountRetryTimer = setTimeout(loadAccounts, accountRetryDelay);
+    accountRetryDelay = Math.min(accountRetryDelay * 2, 30000);
+    return;
+  }
+  try {
+  if (S.sel.accId && !accById(S.sel.accId)) S.sel = { accId: null, path: 'INBOX' };
+  if (S.accounts.length === 1) S.sel = { accId: S.accounts[0].id, path: S.sel.path };
+  S.loading = S.accounts.length > 0;
+  renderHead(); renderNav(); renderList(); renderFoot();
+  // Account display and cached mail do not depend on optional startup settings/draft.
+  const sync = IS_COMPOSE_WINDOW ? Promise.resolve() : Promise.all([refreshFolders(), loadList()]);
+  const optional = (name, stage, fallback, ...args) => call(name, ...args).catch(() => {
+    call('startup:diagnostic', stage).catch(() => {});
+    return fallback;
+  });
+  const [settings, draft] = await Promise.all([
+    optional('settings:get', 'settings', {}, true), optional('draft:get', 'draft', null),
+  ]);
   S.localDraft = draft;
   const savedOrder = Array.isArray(settings.accountOrder) ? settings.accountOrder : [];
   const accountOrder = ['xynu.edu.cn', 'gmail.com', '163.com', 'qq.com'];
@@ -1000,7 +1046,8 @@ async function loadAccounts() {
   renderNav();
   renderReader();
   if (S.localDraft) await openCompose();
-  await Promise.all([refreshFolders(), loadList()]);
+  await sync;
+  } finally { accountLoading = false; }
 }
 
 // ---------- 事件 ----------
@@ -1017,6 +1064,7 @@ $('list').addEventListener('contextmenu', (event) => guard(() => showMessageMenu
 
 $('list').addEventListener('click', (e) => {
   const act = e.target.closest('[data-act]')?.dataset.act;
+  if (act === 'retry-accounts') return loadAccounts();
   if (act === 'add-account') return openAccountDialog();
   if (act === 'edit-draft') return openCompose();
   if (act?.startsWith('bulk-')) return runMessageAction(act.slice(5));
@@ -1151,6 +1199,19 @@ window.api.on('acct:status', ({ accId, status }) => {
 window.api.on('mail:open', async ({ accId, path, uid }) => {
   if (!isUnified()) S.sel = { accId, path };
   S.search = '';
+  if (uid) {
+    const cached = await call('message:cached', accId, path, uid).catch(() => null);
+    if (cached) {
+      let item = S.messages.find((m) => m.accId === accId && m.path === path && m.uid === uid);
+      if (!item) {
+        item = { ...cached, accEmail: accById(accId)?.email || '', seen: false, preview: (cached.text || '').slice(0, 140) };
+        S.messages.unshift(item);
+      }
+      openMessage(item);
+      loadList();
+      return;
+    }
+  }
   await loadList();
   const m = S.messages.find((x) => x.accId === accId && x.path === path && x.uid === uid);
   if (m) openMessage(m);
@@ -1172,6 +1233,8 @@ setInterval(() => {
 
 renderHead();
 renderReader();
+renderList();
+renderFoot();
 function initPaneResizing() {
   const defaults = { sidebar: 236, list: 410 };
   let preferred = { ...defaults };

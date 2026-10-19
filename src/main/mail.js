@@ -30,7 +30,7 @@ function newClient(acc) {
     secure: acc.imap.secure,
     auth: { user: acc.user, pass: acc.pass },
     logger: false,
-    clientInfo: { name: 'Light Mail', version: '0.1.2', vendor: 'personal' },
+    clientInfo: { name: 'Light Mail', version: '0.1.5', vendor: 'personal' },
   });
   client.on('error', () => {});
   return client;
@@ -253,7 +253,7 @@ async function getMessage(acc, path, uid) {
 }
 
 // 批量预取复用解析和缓存，不执行已读标记或其他服务器写入。
-async function cacheFetchedMessage(acc, path, uid, source, flags, uidValidity) {
+async function cacheFetchedMessage(acc, path, uid, source, flags, uidValidity, { strict = false } = {}) {
   const parsed = await simpleParser(source);
   const html = sanitize(parsed.html || parsed.textAsHtml || '', parsed.attachments);
   const attachments = parsed.attachments
@@ -283,7 +283,8 @@ async function cacheFetchedMessage(acc, path, uid, source, flags, uidValidity) {
     unsubscribe: unsubscribeUrl(parsed),
     attachments,
   };
-  await cache.writeBody(acc.id, path, uid, message, uidValidity).catch(() => {});
+  if (strict) await cache.writeBody(acc.id, path, uid, message, uidValidity);
+  else await cache.writeBody(acc.id, path, uid, message, uidValidity).catch(() => {});
   return message;
 }
 
@@ -439,13 +440,17 @@ function startWatcher(acc, hooks, lastUidStart) {
         hooks.status(acc.id, 'online', '');
         let busy = false;
         let again = false;
+        let retryTimer;
+        client.once('close', () => clearTimeout(retryTimer));
 
         const check = async (notify) => {
+          if (w.stopped || !client.usable) return;
           if (busy) {
             again = true;
             return;
           }
           busy = true;
+          clearTimeout(retryTimer);
           try {
             do {
               again = false;
@@ -459,17 +464,30 @@ function startWatcher(acc, hooks, lastUidStart) {
               );
               if (!found.length) continue;
               const fresh = [];
-              for await (const m of client.fetch(found, { uid: true, envelope: true, flags: true }, { uid: true })) {
-                fresh.push(toItem(acc, 'INBOX', m));
+              for await (const m of client.fetch(found, { uid: true, envelope: true, flags: true, source: true }, { uid: true })) {
+                // The watcher mailbox is read-only; source uses BODY.PEEK and does not mark mail read.
+                const body = await cacheFetchedMessage(acc, 'INBOX', m.uid, m.source, m.flags, client.mailbox.uidValidity, { strict: true });
+                const preview = (body.text || htmlToText(body.html)).replace(/\s+/g, ' ').trim().slice(0, 140);
+                fresh.push(toItem(acc, 'INBOX', m, preview));
               }
+              const previous = await cache.readList(acc.id, 'INBOX', { limit: Number.MAX_SAFE_INTEGER });
+              const current = previous?.uidValidity === String(client.mailbox.uidValidity) ? previous.messages || [] : [];
+              const combined = new Map(current.map((m) => [String(m.uid), m]));
+              for (const item of fresh) combined.set(String(item.uid), item);
+              await cache.writeList(acc.id, 'INBOX', {
+                messages: [...combined.values()].sort((a, b) => b.uid - a.uid), total: client.mailbox.exists,
+              }, client.mailbox.uidValidity);
+              // Advance the checkpoint and notify only after bodies and list are on disk.
               lastUid = Math.max(lastUid, ...found);
               hooks.saveUid(acc.id, lastUid);
               hooks.changed(acc.id);
               const unseen = fresh.filter((m) => !m.seen);
               if (notify && unseen.length) hooks.newMail(acc, unseen);
             } while (again);
-          } catch {
-            // 下次事件再试
+          } catch (error) {
+            hooks.prefetchError?.(error);
+            // Retry even if the server emits no further event; don't lose uncached UIDs.
+            if (!w.stopped && client.usable) retryTimer = setTimeout(() => check(notify), 5000);
           } finally {
             busy = false;
           }

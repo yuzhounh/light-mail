@@ -1,9 +1,10 @@
-const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, dialog, shell, powerMonitor, nativeImage, nativeTheme } = require('electron');
+const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, dialog, shell, powerMonitor, nativeImage, nativeTheme, screen } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const store = require('./store');
 const cache = require('./cache');
 const mail = require('./mail');
+const { recordStartup } = require('./diagnostics');
 
 app.setAppUserModelId('com.personal.mymail');
 app.setName('Light Mail');
@@ -36,12 +37,23 @@ function showWindow() {
 }
 
 function createWindow() {
+  const saved = store.getSettings().windowState || {};
+  const validBounds = ['x', 'y', 'width', 'height'].every((key) => Number.isFinite(saved[key]))
+    && saved.width >= 900 && saved.height >= 560;
+  const previous = validBounds ? Object.fromEntries(['x', 'y', 'width', 'height'].map((key) => [key, Math.round(saved[key])])) : null;
+  const area = (previous ? screen.getDisplayMatching(previous) : screen.getPrimaryDisplay()).workArea;
+  const width = Math.min(previous?.width || 1500, area.width);
+  const height = Math.min(previous?.height || 940, area.height);
+  const bounds = {
+    width, height,
+    x: Math.max(area.x, Math.min(previous?.x ?? area.x + Math.round((area.width - width) / 2), area.x + area.width - width)),
+    y: Math.max(area.y, Math.min(previous?.y ?? area.y + Math.round((area.height - height) / 2), area.y + area.height - height)),
+  };
   const titleBarColors = () => ({ color: '#00000000', symbolColor: nativeTheme.shouldUseDarkColors ? '#e8eaed' : '#1c1f24', height: 32 });
   win = new BrowserWindow({
-    width: 1320,
-    height: 840,
-    minWidth: 900,
-    minHeight: 560,
+    ...bounds,
+    minWidth: Math.min(900, area.width),
+    minHeight: Math.min(560, area.height),
     title: 'Light Mail',
     show: !smokeOutput,
     icon,
@@ -56,6 +68,20 @@ function createWindow() {
       sandbox: true,
     },
   });
+  if (saved.maximized && !smokeOutput) win.maximize();
+  let saveWindowTimer;
+  const saveWindowState = () => {
+    clearTimeout(saveWindowTimer);
+    if (smokeOutput || win.isDestroyed() || win.isMinimized()) return;
+    store.setSettings({ windowState: { ...win.getNormalBounds(), maximized: win.isMaximized() } });
+  };
+  // Save after native drag/resize completion, with a fallback for programmatic changes.
+  for (const event of ['moved', 'resized', 'maximize', 'unmaximize']) win.on(event, saveWindowState);
+  for (const event of ['move', 'resize']) win.on(event, () => {
+    clearTimeout(saveWindowTimer);
+    saveWindowTimer = setTimeout(saveWindowState, 150);
+  });
+  win.on('closed', () => clearTimeout(saveWindowTimer));
   win.setMenuBarVisibility(false);
   nativeTheme.on('updated', () => { if (win && !win.isDestroyed()) win.setTitleBarOverlay(titleBarColors()); });
   const loaded = win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
@@ -68,6 +94,7 @@ function createWindow() {
   win.webContents.on('will-navigate', (e) => e.preventDefault());
 
   win.on('close', (e) => {
+    saveWindowState();
     if (!quitting && store.getSettings().closeToTray) {
       e.preventDefault();
       win.hide();
@@ -167,6 +194,7 @@ function startWatching(acc) {
         changed: (id) => send('mail:changed', { accId: id }),
         saveUid: (id, uid) => store.setLastUid(id, uid),
         newMail: notifyNew,
+        prefetchError: (error) => recordStartup('new-mail-prefetch', error),
       },
       lastUid
     )
@@ -178,11 +206,29 @@ function stopWatching(id) {
   watchers.delete(id);
 }
 
+let watcherStartupTimer;
+function startSavedWatchers() {
+  let retry = false;
+  try {
+    for (const account of store.listAccounts()) {
+      if (watchers.has(account.id)) continue;
+      try { startWatching(store.getAccount(account.id)); }
+      catch (error) {
+        retry = true;
+        recordStartup('watcher-account', error);
+        send('acct:status', { accId: account.id, status: 'auth', message: '本地凭据读取失败，正在重试' });
+      }
+    }
+  } catch (error) {
+    retry = true;
+    recordStartup('watcher-startup', error);
+  }
+  if (retry && !quitting) watcherStartupTimer = setTimeout(startSavedWatchers, 5000);
+}
+
 // ---------- IPC ----------
 const accOf = (id) => {
-  const a = store.getAccounts().find((x) => x.id === id);
-  if (!a) throw new Error('账户不存在');
-  return a;
+  return store.getAccount(id);
 };
 
 const api = {
@@ -195,7 +241,15 @@ const api = {
   }),
   'draft:get': () => store.getDraft(),
   'draft:discard': (id) => { const removed = store.clearDraft(id); notifyDraftChanged(); return removed; },
-  'accounts:list': () => store.getAccounts().map(store.publicAccount),
+  'accounts:list': () => {
+    const accounts = store.listAccounts();
+    recordStartup('accounts-loaded', null, accounts.length);
+    return accounts;
+  },
+  'startup:diagnostic': (stage) => {
+    if (['accounts', 'settings', 'draft'].includes(stage)) recordStartup('renderer-' + stage, { code: 'LOAD_FAILED' });
+    return true;
+  },
   'accounts:alias': (id, alias) => store.setAccountAlias(id, alias),
   'accounts:add': async (draft) => {
     const result = await mail.testAccount(draft); // IMAP 登录失败会直接抛错
@@ -243,10 +297,15 @@ const api = {
   'external:open': (url) => openExternal(url),
   'app:unread': (n) => {
     tray?.setToolTip(n > 0 ? `Light Mail · ${n} 封未读` : 'Light Mail');
-    if (win && !win.isDestroyed()) win.setTitle(n > 0 ? `(${n}) Light Mail` : 'Light Mail');
+    if (win && !win.isDestroyed()) win.setTitle('Light Mail');
     return true;
   },
-  'settings:get': () => ({ ...store.getSettings(), autoStart: app.getLoginItemSettings().openAtLogin }),
+  'settings:get': (localOnly = false) => {
+    const settings = store.getSettings();
+    if (localOnly) return settings;
+    try { return { ...settings, autoStart: app.getLoginItemSettings().openAtLogin }; }
+    catch (error) { recordStartup('login-item-settings', error); return settings; }
+  },
   'settings:set': (patch) => {
     if ('autoStart' in patch) app.setLoginItemSettings({ openAtLogin: !!patch.autoStart });
     const { autoStart, ...rest } = patch;
@@ -270,6 +329,7 @@ ipcMain.handle('api', async (_e, name, ...args) => {
     if (!api[name]) throw new Error('未知接口：' + name);
     return { ok: true, data: await api[name](...args) };
   } catch (err) {
+    if (['accounts:list', 'settings:get', 'draft:get'].includes(name)) recordStartup(name, err);
     return { ok: false, error: err.responseText || err.message || String(err) };
   }
 });
@@ -277,6 +337,7 @@ ipcMain.handle('api', async (_e, name, ...args) => {
 app.on('second-instance', showWindow);
 
 app.whenReady().then(async () => {
+  recordStartup('main-ready');
   await createWindow();
   if (smokeOutput) {
     const result = await win.webContents.executeJavaScript("(async () => ({ title: document.title, bridge: typeof window.api.call === 'function', accounts: (await window.api.call('accounts:list')).length, list: Boolean(document.getElementById('list')) }))()");
@@ -286,10 +347,10 @@ app.whenReady().then(async () => {
     return;
   }
   createTray();
-  for (const acc of store.getAccounts()) startWatching(acc);
+  startSavedWatchers();
 
   powerMonitor.on('resume', () => {
-    for (const acc of store.getAccounts()) mail.dropClient(acc.id);
+    for (const id of watchers.keys()) mail.dropClient(id);
     for (const w of watchers.values()) w.reconnect();
     send('mail:changed', {});
   });
@@ -304,6 +365,7 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   quitting = true;
+  clearTimeout(watcherStartupTimer);
   for (const w of watchers.values()) w.stop();
 });
 
