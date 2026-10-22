@@ -2,6 +2,8 @@
 const call = (...a) => window.api.call(...a);
 const $ = (id) => document.getElementById(id);
 const IS_COMPOSE_WINDOW = new URLSearchParams(window.location.search).get('compose') === '1';
+const IS_READER_WINDOW = new URLSearchParams(window.location.search).get('reader') === '1';
+if (IS_READER_WINDOW) document.body.classList.add('reader-window');
 
 // ---------- 小工具 ----------
 const esc = (s) =>
@@ -31,6 +33,7 @@ const ICONS = {
   forward: '<polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/>',
   folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
   refresh: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
+  popout: '<path d="M14 3h7v7M21 3l-9 9"/><path d="M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/>',
   clip: '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
   unread: '<circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="10"/>',
   plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
@@ -52,7 +55,25 @@ const colorOf = (s) => {
 const avatar = (name, seed) =>
   `<div class="avatar" style="background:${colorOf(seed || name)}">${esc((name || '?').trim().charAt(0).toUpperCase() || '?')}</div>`;
 const mailboxColorOf = (email) => ({ 'xynu.edu.cn': '#184d85', 'gmail.com': '#d93025', '163.com': '#b51c28', 'qq.com': '#0078d7' }[email.split('@')[1]?.toLowerCase()] || colorOf(email));
-const mailboxIcon = (email) => `<div class="avatar mailbox-icon" style="--mailbox-color:${email ? mailboxColorOf(email) : '#3b7ddd'}" aria-hidden="true">${ic(email ? 'mail' : 'inboxStack', 22)}</div>`;
+const MAILBOX_BRANDS = {
+  '163.com': { color: '#C8161D', box: [1.6, 5.5, 22.5, 18.5], paths: '<path transform="translate(-2 0)" d="M3.6 7.4 6 5.5v13"/><path d="M13.2 5.6c-3 0-5.6 2.3-5.6 8.9"/><path d="M10.8 12.1a3.2 3.2 0 1 1 0 6.4 3.2 3.2 0 0 1 0-6.4z"/><path transform="translate(2 0)" d="M15.2 5.9h4.9l-2.9 4.2c2 0 3.3 1.5 3.3 3.6 0 2.7-1.8 4.8-4.2 4.8-1.1 0-2-.4-2.6-1.1"/>' },
+  'qq.com': { color: '#EF8A00', box: [3.5, 5.5, 20.5, 18.5], paths: '<path d="M6 5.5h12a2.5 2.5 0 0 1 2.5 2.5v8a2.5 2.5 0 0 1-2.5 2.5H6A2.5 2.5 0 0 1 3.5 16V8A2.5 2.5 0 0 1 6 5.5z"/><path d="M4.6 7.4 12 13.2l7.4-5.8"/>' },
+  'gmail.com': { color: '#EA4335', box: [3.5, 6.2, 20.5, 18.5], paths: '<path d="M3.5 18.5V7.7c0-1.2 1.4-1.9 2.4-1.2L12 11.1l6.1-4.6c1-.7 2.4 0 2.4 1.2v10.8"/><path d="M3.5 18.5h3v-7.7"/><path d="M20.5 18.5h-3v-7.7"/>' },
+  'xynu.edu.cn': { color: '#2B7FE8', box: [4.5, 6.5, 19.5, 17.5], paths: '<path d="M10.2 9.6 7.4 6.5H5.6a1.1 1.1 0 0 0-1.1 1.1v8.8a1.1 1.1 0 0 0 1.1 1.1h1.8l2.8-3.1"/><path d="M13.8 9.6l2.8-3.1h1.8a1.1 1.1 0 0 1 1.1 1.1v8.8a1.1 1.1 0 0 1-1.1 1.1h-1.8L10.6 11"/>' },
+};
+const mailboxBrand = (email) => MAILBOX_BRANDS[email?.split('@')[1]?.toLowerCase()];
+// 品牌图形按外框缩放到与文件夹图标相同的 20 单位宽（高不超过 15）并居中，线宽反向补偿，保持 1.8 的视觉粗细
+const brandSvg = (brand, size) => {
+  const [x0, y0, x1, y1] = brand.box;
+  const s = Math.min(20 / (x1 - x0), 15 / (y1 - y0));
+  const fit = `translate(12 12) scale(${+s.toFixed(4)}) translate(${-(x0 + x1) / 2} ${-(y0 + y1) / 2})`;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${+(1.8 / s).toFixed(3)}" stroke-linecap="round" stroke-linejoin="round"><g transform="${fit}">${brand.paths}</g></svg>`;
+};
+const mailboxIcon = (email) => {
+  const brand = mailboxBrand(email);
+  if (brand) return `<div class="avatar mailbox-icon mailbox-brand" style="--mailbox-color:${brand.color}" aria-hidden="true">${brandSvg(brand, 22)}</div>`;
+  return `<div class="avatar mailbox-icon" style="--mailbox-color:${email ? mailboxColorOf(email) : '#3b7ddd'}" aria-hidden="true">${ic(email ? 'mail' : 'inboxStack', 22)}</div>`;
+};
 
 const personName = (p) => (p ? p.name || p.address : '未知发件人');
 
@@ -95,6 +116,7 @@ const S = {
   accountsError: false,
   folders: {}, // accId -> folders[]
   status: {}, // accId -> online/offline/error/auth
+  hidden: {}, // accId -> folder paths hidden from the sidebar
   sel: { accId: null, path: 'INBOX' }, // accId=null 表示所有账户的收件箱
   messages: [],
   limit: 50,
@@ -106,6 +128,7 @@ const S = {
   loadingMsg: false,
   errors: [],
   loading: false,
+  refreshing: false,
   hasListCache: false,
   localDraft: null,
   selectedKeys: new Set(),
@@ -113,6 +136,7 @@ const S = {
 };
 let listToken = 0;
 let msgToken = 0;
+const folderRefreshTokens = new Map();
 
 const keyOf = (m) => `${m.accId}|${m.path}|${m.uid}`;
 const accById = (id) => S.accounts.find((a) => a.id === id);
@@ -149,14 +173,17 @@ function renderNav() {
       ${ic(icon, 17)}<span class="label">${esc(label)}</span>${localDraft ? '<span class="local-draft-badge">本地 1</span>' : ''}${cnt(count)}</div>`;
   };
   let h = '<div class="nav-group">邮件</div>';
-  if (multi) h += item(null, 'INBOX', '所有收件箱', 'inbox', totalUnread());
+  if (multi) h += item(null, 'INBOX', '所有收件箱', 'inboxStack', totalUnread());
   for (const a of S.accounts) {
     const folders = S.folders[a.id] || [];
     if (multi) {
-      h += `<div class="nav-group nav-account" data-account="${esc(a.id)}" title="${esc(a.email)}"><span class="sdot ${S.status[a.id] || ''}"></span><div class="account-label account-alias">${esc(accountAlias(a))}</div></div>`;
+      const failed = ['error', 'auth'].includes(S.status[a.id]) ? `<span class="sdot ${S.status[a.id]}" title="${S.status[a.id] === 'auth' ? '登录失败' : '连接出错'}"></span>` : '';
+      const brand = mailboxBrand(a.email);
+      const logo = brand ? `<span style="color:${brand.color};display:grid">${brandSvg(brand, 17)}</span>` : ic('mail', 15);
+      h += `<div class="nav-group nav-account" data-account="${esc(a.id)}" title="${esc(a.email)}"><span class="nav-logo">${logo}${failed}</span><div class="account-label"><div class="account-alias">${esc(accountAlias(a))}</div><div class="account-address">${esc(a.email)}</div></div>${gearButton(a)}</div>`;
     }
-    const specials = folders.filter((f) => f.specialUse);
-    const others = folders.filter((f) => !f.specialUse);
+    const specials = folders.filter((f) => f.specialUse && !isHidden(a.id, f.path));
+    const others = folders.filter((f) => !f.specialUse && !isHidden(a.id, f.path));
     if (!folders.length) {
       h += item(a.id, 'INBOX', '收件箱', 'inbox', 0);
     }
@@ -180,7 +207,7 @@ function renderHead() {
     $('acct-head').innerHTML = `${mailboxIcon()}<div class="meta"><div class="name">Light Mail</div><div class="mail">${label}</div></div>`;
   } else if (a || S.accounts.length === 1) {
     const x = a || first;
-    $('acct-head').innerHTML = `${mailboxIcon(x.email)}<div class="meta"><div class="name" title="${esc(accountAlias(x))}">${esc(accountAlias(x))}</div><div class="mail" title="${esc(x.email)}">${esc(x.email)}</div></div>`;
+    $('acct-head').innerHTML = `${mailboxIcon(x.email)}${gearButton(x)}<div class="meta"><div class="name" title="${esc(accountAlias(x))}">${esc(accountAlias(x))}</div><div class="mail" title="${esc(x.email)}">${esc(x.email)}</div></div>`;
   } else {
     $('acct-head').innerHTML = `${mailboxIcon()}<div class="meta"><div class="name">所有收件箱</div><div class="mail">${S.accounts.length} 个邮箱</div></div>`;
   }
@@ -191,19 +218,21 @@ function renderHead() {
   $('btn-refresh').innerHTML = ic('refresh');
 }
 
-function renderFoot() {
+function renderSyncStatus() {
+  const status = $('sync-status');
   if (S.accountsError || S.accountsState !== 'ready') {
-    $('side-foot').textContent = S.accountsError ? '账户加载失败，正在自动重试…' : '正在读取本地账户…';
+    status.textContent = status.title = S.accountsError ? '账户加载失败，正在自动重试…' : '正在读取本地账户…';
     return;
   }
   const vals = S.accounts.map((a) => S.status[a.id]);
   let t = '已同步';
   if (!S.accounts.length) t = '';
-  else if (S.loading) t = '同步中…';
+  else if (S.loading || S.refreshing) t = '同步中…';
   else if (vals.includes('auth')) t = '登录失败，请检查密码';
   else if (vals.includes('error')) t = '连接出错，重试中…';
   else if (vals.includes('offline') || vals.includes(undefined)) t = '连接中…';
-  $('side-foot').textContent = t;
+  else if (S.errors.length) t = '同步未完成';
+  status.textContent = status.title = t;
 }
 
 // ---------- 列表 ----------
@@ -214,10 +243,36 @@ function listTitle() {
 }
 
 function visibleMessages() {
-  return S.unreadOnly ? S.messages.filter((m) => !m.seen) : S.messages;
+  // Keep a just-read preview or checked row present until the user leaves it.
+  return S.unreadOnly ? S.messages.filter((m) => !m.seen || keyOf(m) === S.curKey || S.selectedKeys.has(keyOf(m))) : S.messages;
+}
+
+function updateMessageSelection() {
+  if (IS_READER_WINDOW) return;
+  const selectedCount = selectedMessages().length;
+  const bar = $('selection-bar');
+  bar.hidden = selectedCount === 0;
+  bar.innerHTML = selectedCount ? `<span>已选 ${selectedCount} 封</span><button class="btn" data-act="bulk-read">已读</button><button class="btn" data-act="bulk-move">移动</button><button class="btn" data-act="bulk-trash">删除</button><button class="icon-btn" data-act="clear-selection" title="取消选择">${ic('x')}</button>` : '';
+  const messages = new Map(S.messages.map((m) => [keyOf(m), m]));
+  const visible = new Set(visibleMessages().map(keyOf));
+  for (const row of $('list').querySelectorAll('.row[data-key]')) {
+    const key = row.dataset.key;
+    if (!visible.has(key)) { row.remove(); continue; }
+    row.classList.toggle('current', key === S.curKey);
+    row.classList.toggle('sel', S.selectedKeys.has(key));
+    row.querySelector('.row-check').checked = S.selectedKeys.has(key);
+    const item = messages.get(key);
+    if (item) {
+      row.classList.toggle('unread', !item.seen);
+      const star = row.querySelector('.star');
+      if (!item.flagged) star?.remove();
+      else if (!star) row.querySelector('.r2').insertAdjacentHTML('beforeend', `<span class="star">${ic('star', 13, true)}</span>`);
+    }
+  }
 }
 
 function renderList() {
+  if (IS_READER_WINDOW) return;
   $('list-title').textContent = S.search ? `搜索：${S.search}` : listTitle();
   $('btn-unread').classList.toggle('on', S.unreadOnly);
   const list = $('list');
@@ -227,8 +282,6 @@ function renderList() {
   }
   const keepScroll = list.scrollTop;
   let h = '';
-  const selectedCount = selectedMessages().length;
-  if (selectedCount > 1) h += `<div class="selection-bar"><span>已选 ${selectedCount} 封</span><button class="btn" data-act="bulk-read">已读</button><button class="btn" data-act="bulk-move">移动</button><button class="btn" data-act="bulk-trash">删除</button><button class="icon-btn" data-act="clear-selection" title="取消选择">${ic('x')}</button></div>`;
   for (const e of S.errors) h += `<div class="banner">${esc(e)}</div>`;
   const msgs = visibleMessages();
   const draft = S.localDraft?.accId === S.sel.accId
@@ -266,10 +319,12 @@ function renderList() {
   }
   list.innerHTML = h;
   list.scrollTop = keepScroll;
+  updateMessageSelection();
   renderNavButtons();
 }
 
 async function loadList() {
+  if (IS_READER_WINDOW) return;
   if (S.accountsState !== 'ready') { renderList(); return; }
   const token = ++listToken;
   if (S.sel.path === '@local-drafts') {
@@ -277,12 +332,12 @@ async function loadList() {
     S.errors = [];
     S.messages = [];
     renderList();
-    renderFoot();
+    renderSyncStatus();
     return;
   }
   S.loading = true;
   S.errors = [];
-  renderFoot();
+  renderSyncStatus();
   const unified = isUnified();
   const limit = S.limit;
   const search = S.search;
@@ -328,21 +383,29 @@ async function loadList() {
   // 当前邮件已不在列表里（被移走/删除）
   if (S.curKey && !S.search && !S.messages.some((m) => keyOf(m) === S.curKey)) closeMessage(false);
   renderList();
-  renderFoot();
+  renderSyncStatus();
 }
 
 async function refreshFolders(accIds) {
+  if (IS_READER_WINDOW) return;
   await Promise.all(
     (accIds || S.accounts.map((a) => a.id)).map(async (id) => {
+      const token = (folderRefreshTokens.get(id) || 0) + 1;
+      folderRefreshTokens.set(id, token);
       try {
-        S.folders[id] = await call('folders:list', id);
+        const folders = await call('folders:list', id);
+        if (folderRefreshTokens.get(id) === token) S.folders[id] = folders;
       } catch (e) {
-        S.errors.push(`${accById(id)?.email || ''}：${e.message}`);
+        if (folderRefreshTokens.get(id) === token) S.errors.push(`${accById(id)?.email || ''}：${e.message}`);
       }
     })
   );
   renderNav();
-  call('app:unread', totalUnread());
+  updateUnreadCount();
+}
+
+function updateUnreadCount() {
+  if (!IS_READER_WINDOW) call('app:unread', totalUnread());
 }
 
 function select(accId, path) {
@@ -366,7 +429,26 @@ function closeMessage(rerender = true) {
   S.loadingMsg = false;
   msgToken++;
   renderReader();
-  if (rerender) renderList();
+  if (rerender) updateMessageSelection();
+}
+
+function openReaderWindow(item = S.cur || S.messages.find((m) => keyOf(m) === S.curKey)) {
+  if (item) return guard(() => call('reader:open', { ...item, specialUse: folderMeta(item.accId, item.path)?.specialUse }));
+}
+
+async function loadReaderWindow() {
+  try {
+    const [accounts, item] = await Promise.all([call('accounts:list'), call('reader:init')]);
+    S.accounts = accounts;
+    S.accountsState = 'ready';
+    S.sel = { accId: item.accId, path: item.path };
+    if (item.specialUse) S.folders[item.accId] = [{ path: item.path, specialUse: item.specialUse }];
+    S.messages = [{ ...item, accEmail: accById(item.accId)?.email || '' }];
+    document.title = item.subject + ' — Light Mail';
+    await openMessage(S.messages[0]);
+  } catch (error) {
+    $('read-pane').innerHTML = `<div class="read-empty">无法打开邮件：${esc(error.message)}</div>`;
+  }
 }
 
 function renderNavButtons() {
@@ -378,13 +460,14 @@ function renderNavButtons() {
 }
 
 async function openMessage(item) {
+  if (S.curKey === keyOf(item) && (S.cur || S.loadingMsg)) return;
   const token = ++msgToken;
-  if (!S.selectedKeys?.has(keyOf(item))) S.selectedKeys = new Set([keyOf(item)]);
+  S.selectedKeys.clear();
   S.anchorKey = keyOf(item);
   S.curKey = keyOf(item);
   S.cur = null;
   S.loadingMsg = true;
-  renderList();
+  updateMessageSelection();
   const cached = await call('message:cached', item.accId, item.path, item.uid).catch(() => null);
   if (token !== msgToken) return;
   if (cached) {
@@ -392,11 +475,16 @@ async function openMessage(item) {
     S.loadingMsg = false;
   }
   renderReader();
-  const m = await guard(() => call('message:get', item.accId, item.path, item.uid));
+  // A cached body never changes; only unread mail needs a server write (mark as read).
+  let m = cached;
+  if (cached) {
+    if (item.seen) return;
+    await guard(() => call('message:flag', item.accId, item.path, [item.uid], '\\Seen', true));
+  } else m = await guard(() => call('message:get', item.accId, item.path, item.uid));
   if (token !== msgToken) return;
   S.loadingMsg = false;
   if (!m) {
-    if (!cached) closeMessage();
+    closeMessage();
     return;
   }
   S.cur = m;
@@ -406,10 +494,10 @@ async function openMessage(item) {
     const f = folderMeta(item.accId, item.path);
     if (f && f.unseen > 0) f.unseen--;
     renderNav();
-    call('app:unread', totalUnread());
+    updateUnreadCount();
   }
   renderReader();
-  renderList();
+  updateMessageSelection();
 }
 
 let disposeReaderFrame = () => {};
@@ -435,8 +523,9 @@ function renderReader() {
   const bar = `<div class="read-bar">
     <div class="grp">
       <button class="icon-btn" data-act="close" title="关闭 (Esc)">${ic('x')}</button>
-      <button class="icon-btn" data-act="prev" title="上一封 (K)">${ic('left')}</button>
+      ${IS_READER_WINDOW ? '' : `<button class="icon-btn" data-act="prev" title="上一封 (K)">${ic('left')}</button>
       <button class="icon-btn" data-act="next" title="下一封 (J)">${ic('right')}</button>
+      <button class="icon-btn" data-act="popout" title="在独立窗口打开">${ic('popout')}</button>`}
     </div>
     <div class="grp">
       <button class="icon-btn" data-act="reply" title="回复 (R)" ${m ? '' : 'disabled'}>${ic('reply')}</button>
@@ -557,21 +646,7 @@ function move(delta) {
 }
 
 async function moveAway(kind) {
-  const m = S.cur;
-  if (!m) return;
-  const key = S.curKey;
-  const next = neighbour(key);
-  const f = folderMeta(m.accId, m.path);
-  S.messages = S.messages.filter((x) => keyOf(x) !== key);
-  if (next) openMessage(next);
-  else closeMessage();
-  renderList();
-  const ok = await guard(() => call('message:move', m.accId, m.path, [m.uid], kind));
-  if (ok === undefined) loadList();
-  else {
-    toast(kind === 'trash' ? (f?.specialUse === '\\Trash' ? '已永久删除' : '已移到废纸篓') : kind === 'archive' ? '已归档' : '已标为垃圾邮件');
-    refreshFolders([m.accId]);
-  }
+  if (S.cur) return runMessageAction(kind, [S.cur]);
 }
 
 async function toggleStar() {
@@ -590,16 +665,7 @@ async function toggleStar() {
 }
 
 async function markUnread() {
-  const m = S.cur;
-  if (!m) return;
-  const row = S.messages.find((x) => keyOf(x) === S.curKey);
-  if (row) row.seen = false;
-  const f = folderMeta(m.accId, m.path);
-  if (f) f.unseen++;
-  closeMessage();
-  renderNav();
-  await guard(() => call('message:flag', m.accId, m.path, [m.uid], '\\Seen', false));
-  call('app:unread', totalUnread());
+  if (S.cur) return runMessageAction('unread', [S.cur]);
 }
 
 // ---------- 写信 ----------
@@ -833,18 +899,36 @@ const DOMAIN_PRESET = {
   'qq.com': 'qq', 'foxmail.com': 'qq', '163.com': '163', '126.com': '126', 'icloud.com': 'icloud', 'me.com': 'icloud', 'yahoo.com': 'yahoo',
 };
 
-function openAccountDialog() {
+const OAUTH_PROVIDER = { gmail: 'google', outlook: 'microsoft' };
+const OAUTH_INFO = {
+  google: { label: 'Google', secret: true,
+    hint: '需要自己在 Google Cloud 创建“桌面应用”类型的 OAuth 客户端并启用 Gmail API，把客户端 ID 和密钥填在这里。应用要发布为“正式版”，否则授权每 7 天失效。步骤见 docs/oauth.md。' },
+  microsoft: { label: 'Microsoft', secret: false,
+    hint: '需要自己在 Azure 门户注册应用（支持个人账户，平台选“移动和桌面应用程序”，重定向 URI 填 http://localhost），把应用程序（客户端）ID 填在这里，无需密钥。步骤见 docs/oauth.md。' },
+};
+
+function openAccountDialog(existing = null) {
   const root = $('modal-root');
   const opt = (k) => `<option value="${k}">${esc(PRESETS[k].label)}</option>`;
   root.innerHTML = `<div class="overlay"><div class="modal">
-    <div class="modal-head"><span>添加邮箱</span><button class="icon-btn" data-c="cancel">${ic('x')}</button></div>
+    <div class="modal-head"><span>${existing ? '编辑配置 / 授权码' : '添加邮箱'}</span><button class="icon-btn" data-c="cancel">${ic('x')}</button></div>
     <div class="modal-body">
       <div class="grid2">
         <div class="field"><label>邮箱地址</label><input id="a-email" placeholder="you@example.com" autofocus /></div>
         <div class="field"><label>显示名称（发信时的署名）</label><input id="a-name" /></div>
       </div>
       <div class="field"><label>服务商</label><select id="a-preset">${Object.keys(PRESETS).map(opt).join('')}</select></div>
-      <div class="field"><label>密码 / 授权码</label><input id="a-pass" type="password" /><div class="hint" id="a-hint"></div></div>
+      <div class="field" id="a-method-row" hidden><label>登录方式</label>
+        <label class="check"><input type="radio" name="a-method" value="oauth" checked /> 用 <span id="a-oname"></span> 账号登录（推荐）</label>
+        <label class="check"><input type="radio" name="a-method" value="pass" /> 用密码 / 授权码</label>
+      </div>
+      <div class="field" id="a-oauth" hidden>
+        <label>OAuth 客户端 ID</label><input id="a-cid" autocomplete="off" />
+        <div id="a-csec-row"><label style="margin-top:6px;display:block">客户端密钥</label><input id="a-csec" type="password" autocomplete="off" /></div>
+        <div class="hint" id="a-ohint"></div>
+      </div>
+      <div class="field" id="a-reauth" hidden><div class="hint" id="a-reauth-hint"></div><div><button class="btn" data-c="reauth">重新登录</button></div></div>
+      <div class="field" id="a-passrow"><label>密码 / 授权码</label><input id="a-pass" type="password" /><div class="hint" id="a-hint"></div></div>
       <div id="a-adv" class="field">
         <label>IMAP 服务器（地址 / 端口 / SSL）</label>
         <div class="grid3"><input id="a-ih" /><input id="a-ip" type="number" /><select id="a-is"><option value="1">SSL</option><option value="0">STARTTLS</option></select></div>
@@ -854,7 +938,7 @@ function openAccountDialog() {
       </div>
     </div>
     <div class="modal-foot"><span class="grow" id="a-msg"></span>
-      <button class="btn" data-c="cancel">取消</button><button class="btn primary" data-c="save">连接并添加</button></div>
+      <button class="btn" data-c="cancel">取消</button><button class="btn primary" data-c="save">${existing ? '测试并保存' : '连接并添加'}</button></div>
   </div></div>`;
   const q = $;
   let preset = 'gmail';
@@ -867,18 +951,94 @@ function openAccountDialog() {
     [q('a-sh').value, q('a-sp').value, q('a-ss').value] = [p.smtp[0], p.smtp[1], p.smtp[2] ? '1' : '0'];
   };
   applyPreset('gmail');
-  q('a-preset').onchange = (e) => applyPreset(e.target.value);
+  if (existing) {
+    applyPreset(DOMAIN_PRESET[existing.email.split('@')[1]?.toLowerCase()] || 'custom');
+    q('a-email').value = existing.email;
+    q('a-email').disabled = true;
+    q('a-name').value = existing.name || '';
+    q('a-user').value = existing.user && existing.user !== existing.email ? existing.user : '';
+    q('a-pass').placeholder = '留空则保留原授权码';
+    [q('a-ih').value, q('a-ip').value, q('a-is').value] = [existing.imap.host, existing.imap.port, existing.imap.secure ? '1' : '0'];
+    [q('a-sh').value, q('a-sp').value, q('a-ss').value] = [existing.smtp.host, existing.smtp.port, existing.smtp.secure ? '1' : '0'];
+  }
+  // OAuth：Gmail / Outlook 可选；已有的 OAuth 账户只能重新登录。
+  let oauthCfg = {};
+  const providerOf = () => OAUTH_PROVIDER[preset];
+  const isOauth = () => (existing ? existing.authType === 'oauth' : !!providerOf() && root.querySelector('[name="a-method"]:checked').value === 'oauth');
+  const refreshMode = () => {
+    const prov = providerOf();
+    const oauth = isOauth();
+    q('a-method-row').hidden = !!existing || !prov;
+    if (prov) q('a-oname').textContent = OAUTH_INFO[prov].label;
+    q('a-oauth').hidden = !oauth || !!existing;
+    q('a-reauth').hidden = !(existing && oauth);
+    q('a-passrow').hidden = oauth;
+    q('a-adv').hidden = oauth;
+    if (existing && oauth) q('a-reauth-hint').textContent = `此账户通过 ${OAUTH_INFO[existing.provider]?.label || ''} 登录，无需密码。登录失效时可在这里重新登录。`;
+    if (oauth && !existing) {
+      const info = OAUTH_INFO[prov];
+      q('a-csec-row').hidden = !info.secret;
+      q('a-ohint').textContent = info.hint;
+      q('a-cid').value = oauthCfg[prov]?.clientId || '';
+      q('a-csec').value = oauthCfg[prov]?.clientSecret || '';
+    }
+    const save = root.querySelector('[data-c="save"]');
+    save.textContent = existing ? '测试并保存' : oauth ? '在浏览器中登录' : '连接并添加';
+  };
+  call('settings:get', true).then((s) => { oauthCfg = s.oauth || {}; refreshMode(); }).catch(() => {});
+  root.querySelectorAll('[name="a-method"]').forEach((r) => r.addEventListener('change', refreshMode));
+  q('a-preset').onchange = (e) => { applyPreset(e.target.value); refreshMode(); };
   q('a-email').oninput = (e) => {
     const k = DOMAIN_PRESET[e.target.value.split('@')[1]?.toLowerCase()];
-    if (k && k !== preset) applyPreset(k);
+    if (k && k !== preset) { applyPreset(k); refreshMode(); }
   };
+  refreshMode();
   root.querySelector('.overlay').addEventListener('click', async (e) => {
     const act = e.target.closest('[data-c]')?.dataset.c;
-    if (act === 'cancel') root.innerHTML = '';
+    if (act === 'cancel') {
+      call('oauth:cancel').catch(() => {});
+      root.innerHTML = '';
+    }
+    if (act === 'reauth') {
+      q('a-msg').textContent = '请在浏览器中完成登录…';
+      try {
+        await call('accounts:reauth', existing.id);
+        root.innerHTML = '';
+        await loadAccounts();
+        toast('已重新登录 ' + existing.email);
+      } catch (err) {
+        q('a-msg').textContent = '登录失败：' + err.message;
+      }
+      return;
+    }
     if (act !== 'save') return;
+    if (!existing && isOauth()) {
+      const prov = providerOf();
+      const clientId = q('a-cid').value.trim();
+      if (!clientId) {
+        q('a-msg').textContent = '请先填写 OAuth 客户端 ID';
+        return;
+      }
+      const btn = e.target.closest('[data-c]');
+      btn.disabled = true;
+      q('a-msg').textContent = '请在浏览器中完成登录（可点取消放弃）…';
+      try {
+        await call('settings:set', { oauth: { ...oauthCfg, [prov]: { clientId, clientSecret: q('a-csec').value.trim() } } });
+        const r = await call('accounts:add-oauth', prov, { name: q('a-name').value.trim(), hint: q('a-email').value.trim() });
+        root.innerHTML = '';
+        await loadAccounts();
+        if (!r.smtpOk) toast('已添加，但发信服务器验证失败：' + r.smtpError, true);
+        else toast('已添加 ' + r.email);
+      } catch (err) {
+        if (!root.innerHTML) return; // 已取消
+        btn.disabled = false;
+        q('a-msg').textContent = '登录失败：' + err.message;
+      }
+      return;
+    }
     const email = q('a-email').value.trim();
     const pass = q('a-pass').value;
-    if (!email || !pass || !q('a-ih').value || !q('a-sh').value) {
+    if (!email || (!pass && !existing) || !q('a-ih').value || !q('a-sh').value) {
       q('a-msg').textContent = '请填写邮箱、密码和服务器地址';
       return;
     }
@@ -892,9 +1052,17 @@ function openAccountDialog() {
       pass,
       imap: { host: q('a-ih').value.trim(), port: Number(q('a-ip').value), secure: q('a-is').value === '1' },
       smtp: { host: q('a-sh').value.trim(), port: Number(q('a-sp').value), secure: q('a-ss').value === '1' },
-      saveSent: PRESETS[preset].saveSent,
+      saveSent: existing && 'saveSent' in existing ? existing.saveSent : PRESETS[preset].saveSent,
     };
     try {
+      if (existing) {
+        const r = await call('accounts:update', existing.id, draft);
+        root.innerHTML = '';
+        await loadAccounts();
+        if (!r.smtpOk) toast('已保存，但发信服务器验证失败：' + r.smtpError, true);
+        else toast('已保存 ' + email);
+        return;
+      }
       const r = await call('accounts:add', draft);
       root.innerHTML = '';
       await loadAccounts();
@@ -907,6 +1075,122 @@ function openAccountDialog() {
   });
 }
 
+const isHidden = (accId, path) => path.toUpperCase() !== 'INBOX' && (S.hidden[accId] || []).includes(path);
+const gearButton = (a) => `<button class="acct-gear" data-gear="${esc(a.id)}" title="邮箱设置" aria-label="${esc(accountAlias(a))} 的设置">${ic('settings', 15)}</button>`;
+
+async function saveHidden(accId, paths) {
+  const next = { ...S.hidden, [accId]: [...new Set(paths)] };
+  await call('settings:set', { hiddenFolders: next });
+  S.hidden = next;
+  renderNav();
+}
+
+async function showAccountMenu(accId) {
+  const a = accById(accId);
+  if (!a) return;
+  const index = S.accounts.indexOf(a);
+  const action = await call('menu:show', [
+    { id: 'edit', label: '编辑配置 / 授权码…' },
+    { id: 'folders', label: '管理文件夹…' },
+    { id: 'rename', label: '重命名…' },
+    { type: 'separator' },
+    { id: 'up', label: '上移', enabled: index > 0 },
+    { id: 'down', label: '下移', enabled: index < S.accounts.length - 1 },
+    { type: 'separator' },
+    { id: 'remove', label: '移除本机账户…' },
+  ]);
+  if (action === 'edit') return openAccountDialog(a);
+  if (action === 'folders') return openFolderManager(accId);
+  if (action === 'rename') {
+    const name = await inputDialog('重命名邮箱', '邮箱名称', accountAlias(a));
+    if (name === null) return;
+    a.alias = await call('accounts:alias', accId, name.trim());
+    renderHead(); renderNav();
+    return;
+  }
+  if (action === 'up' || action === 'down') {
+    const next = index + (action === 'up' ? -1 : 1);
+    const ordered = [...S.accounts];
+    [ordered[index], ordered[next]] = [ordered[next], ordered[index]];
+    await call('settings:set', { accountOrder: ordered.map((x) => x.id) });
+    S.accounts = ordered;
+    renderHead(); renderNav();
+    return;
+  }
+  if (action === 'remove' && confirm(`移除 ${a.email}？只会删除本机保存的登录信息，不影响邮箱里的邮件。`)) {
+    await call('accounts:remove', accId);
+    if (S.sel.accId === accId) S.sel = { accId: null, path: 'INBOX' };
+    await loadAccounts();
+  }
+}
+
+async function openFolderManager(accId) {
+  const a = accById(accId);
+  if (!a) return;
+  if (!(S.folders[accId] || []).length) await refreshFolders([accId]);
+  const root = $('modal-root');
+  const folders = S.folders[accId] || [];
+  const custom = (f) => !f.specialUse && f.path.toUpperCase() !== 'INBOX';
+  const rows = folders.map((f) => {
+    const inbox = f.path.toUpperCase() === 'INBOX';
+    const toggle = inbox ? '<span class="folder-fixed">固定显示</span>'
+      : `<label class="switch" title="在侧栏显示"><input type="checkbox" data-show="${esc(f.path)}" ${isHidden(accId, f.path) ? '' : 'checked'}/><span></span></label>`;
+    const tools = custom(f) ? `<button class="btn small" data-fa="rename" data-path="${esc(f.path)}">重命名</button><button class="btn small" data-fa="move" data-path="${esc(f.path)}">移动</button><button class="btn small danger" data-fa="remove" data-path="${esc(f.path)}">删除</button>` : '';
+    return `<div class="folder-row" style="padding-left:${f.depth ? f.depth * 16 : 0}px">${ic(inbox ? 'inbox' : SPECIAL_ICON[f.specialUse] || 'folder', 16)}<span class="grow" title="${esc(f.path)}">${esc(f.label)}</span>${tools}${toggle}</div>`;
+  }).join('') || '<div class="empty">暂无文件夹</div>';
+  root.innerHTML = `<div class="overlay"><div class="modal folder-modal">
+    <div class="modal-head"><span>${esc(accountAlias(a))} · 文件夹</span><button class="icon-btn" data-fc="close">${ic('x')}</button></div>
+    <div class="modal-body"><div class="hint">关闭开关后，该文件夹不在侧栏显示；服务器上的邮件不受影响。</div><div class="folder-list">${rows}</div></div>
+    <div class="modal-foot"><button class="btn" data-fc="create">${ic('plus', 15)} 新建文件夹</button><span class="grow"></span><button class="btn primary" data-fc="close">完成</button></div>
+  </div></div>`;
+  const overlay = root.querySelector('.overlay');
+  overlay.addEventListener('change', (e) => {
+    const box = e.target.closest('[data-show]');
+    if (!box) return;
+    const path = box.dataset.show;
+    const hidden = (S.hidden[accId] || []).filter((p) => p !== path);
+    if (!box.checked) hidden.push(path);
+    guard(() => saveHidden(accId, hidden));
+  });
+  overlay.addEventListener('click', async (e) => {
+    const close = e.target.closest('[data-fc]')?.dataset.fc;
+    if (close === 'close') { root.innerHTML = ''; return; }
+    const action = close === 'create' ? 'create' : e.target.closest('[data-fa]')?.dataset.fa;
+    if (!action) return;
+    const path = e.target.closest('[data-path]')?.dataset.path || '';
+    const meta = folders.find((f) => f.path === path);
+    try {
+      if (action === 'remove') {
+        if (!confirm(`删除空文件夹“${meta.label}”？只能删除没有邮件的文件夹。`)) return;
+        await call('folder:edit', accId, 'remove', path, '');
+        if (isHidden(accId, path)) await saveHidden(accId, S.hidden[accId].filter((p) => p !== path));
+        if (S.sel.accId === accId && S.sel.path === path) S.sel.path = 'INBOX';
+      } else if (action === 'move') {
+        const delimiter = meta.delimiter || '/';
+        const options = [{ value: '', label: '邮箱根目录' }, ...folders.filter((f) => f.path !== path && !f.path.startsWith(path + delimiter)).map((f) => ({ value: f.path, label: f.path }))];
+        const parent = await inputDialog('移动文件夹', '选择父文件夹', '', options);
+        if (parent === null) return openFolderManager(accId);
+        const destination = await call('folder:edit', accId, 'move', path, parent);
+        await renameHidden(accId, path, destination);
+      } else {
+        const name = await inputDialog(action === 'rename' ? '重命名文件夹' : '新建文件夹', '文件夹名称', action === 'rename' ? meta.name : '');
+        if (name === null) return openFolderManager(accId);
+        const destination = await call('folder:edit', accId, action, action === 'rename' ? path : '', name);
+        if (action === 'rename') await renameHidden(accId, path, destination);
+      }
+      await refreshFolders([accId]);
+      await loadList();
+    } catch (err) { toast(err.message, true); }
+    openFolderManager(accId);
+  });
+}
+
+async function renameHidden(accId, from, to) {
+  if (S.sel.accId === accId && S.sel.path === from) S.sel.path = to;
+  if (!isHidden(accId, from)) return;
+  await saveHidden(accId, S.hidden[accId].map((p) => (p === from ? to : p)));
+}
+
 async function openSettings() {
   const st = await guard(() => call('settings:get'));
   if (!st) return;
@@ -914,72 +1198,15 @@ async function openSettings() {
   root.innerHTML = `<div class="overlay"><div class="modal settings-modal">
     <div class="modal-head"><span>设置</span><button class="icon-btn" data-c="cancel">${ic('x')}</button></div>
     <div class="modal-body">
-      <div id="settings-accounts"></div>
       <button class="btn" data-c="add">${ic('plus', 15)} 添加邮箱</button>
       <label class="check"><input type="checkbox" id="s-auto" ${st.autoStart ? 'checked' : ''}/> 开机自启动</label>
       <label class="check"><input type="checkbox" id="s-tray" ${st.closeToTray ? 'checked' : ''}/> 关闭窗口时最小化到托盘</label>
+      <img class="settings-icon" src="../../assets/icon.png" width="48" height="48" alt="Light Mail" />
+      <div class="settings-version" id="s-version">Light Mail</div>
     </div>
   </div></div>`;
-  let savingOrder = false;
-  const drawAccounts = () => {
-    const container = $('settings-accounts');
-    if (!container) return;
-    container.innerHTML = S.accounts.map((a, i) => `<div class="acct-row">${mailboxIcon(a.email)}<div class="grow"><div title="${esc(a.email)}">${esc(a.email)}</div></div><input class="acct-alias" data-alias="${a.id}" value="${esc(accountAlias(a))}" maxlength="80" aria-label="${esc(a.email)} 的别名" title="邮箱别名，修改后自动保存" ${savingOrder ? 'disabled' : ''}/><div class="acct-actions"><button class="icon-btn" data-move="${a.id}" data-step="-1" title="上移" aria-label="上移 ${esc(a.email)}" ${savingOrder || i === 0 ? 'disabled' : ''}>${ic('up')}</button><button class="icon-btn" data-move="${a.id}" data-step="1" title="下移" aria-label="下移 ${esc(a.email)}" ${savingOrder || i === S.accounts.length - 1 ? 'disabled' : ''}>${ic('down')}</button><button class="icon-btn danger" data-rm="${a.id}" title="移除邮箱" aria-label="移除 ${esc(a.email)}" ${savingOrder ? 'disabled' : ''}>${ic('trash')}</button></div></div>`).join('') || '<div class="empty">尚未添加账户</div>';
-  };
-  drawAccounts();
-  root.querySelector('.overlay').addEventListener('change', async (e) => {
-    const input = e.target.closest('[data-alias]');
-    if (!input) return;
-    const account = accById(input.dataset.alias);
-    if (!account) return;
-    input.disabled = true;
-    try {
-      account.alias = await call('accounts:alias', account.id, input.value.trim());
-      input.value = accountAlias(account);
-      renderHead();
-      renderNav();
-    } catch (err) {
-      input.value = accountAlias(account);
-      toast('别名保存失败：' + err.message, true);
-    } finally {
-      input.disabled = false;
-    }
-  });
-  root.querySelector('.overlay').addEventListener('click', async (e) => {
-    if (savingOrder) return;
-    const move = e.target.closest('[data-move]');
-    if (move) {
-      const index = S.accounts.findIndex((a) => a.id === move.dataset.move);
-      const next = index + Number(move.dataset.step);
-      if (index < 0 || next < 0 || next >= S.accounts.length) return;
-      const ordered = [...S.accounts];
-      [ordered[index], ordered[next]] = [ordered[next], ordered[index]];
-      savingOrder = true;
-      drawAccounts();
-      try {
-        await call('settings:set', { accountOrder: ordered.map((a) => a.id) });
-        S.accounts = ordered;
-        renderHead();
-        renderNav();
-      } catch (err) {
-        toast('排序保存失败：' + err.message, true);
-      } finally {
-        savingOrder = false;
-        drawAccounts();
-      }
-      return;
-    }
-    const rm = e.target.closest('[data-rm]')?.dataset.rm;
-    if (rm) {
-      const a = accById(rm);
-      if (confirm(`移除 ${a.email}？只会删除本机保存的登录信息，不影响邮箱里的邮件。`)) {
-        await guard(() => call('accounts:remove', rm));
-        root.innerHTML = '';
-        if (S.sel.accId === rm) S.sel = { accId: null, path: 'INBOX' };
-        await loadAccounts();
-      }
-      return;
-    }
+  call('app:version').then((v) => { if ($('s-version')) $('s-version').textContent = 'Light Mail ' + v; }).catch(() => {});
+  root.querySelector('.overlay').addEventListener('click', (e) => {
     const act = e.target.closest('[data-c]')?.dataset.c;
     if (act === 'add') openAccountDialog();
     if (act === 'cancel') root.innerHTML = '';
@@ -1004,7 +1231,7 @@ async function loadAccounts() {
   } catch {
     S.accountsError = true;
     // Keep any previously loaded accounts. Failed reads never mean zero accounts.
-    renderHead(); renderList(); renderFoot();
+    renderHead(); renderList(); renderSyncStatus();
     call('startup:diagnostic', 'accounts').catch(() => {});
     accountLoading = false;
     accountRetryTimer = setTimeout(loadAccounts, accountRetryDelay);
@@ -1015,7 +1242,7 @@ async function loadAccounts() {
   if (S.sel.accId && !accById(S.sel.accId)) S.sel = { accId: null, path: 'INBOX' };
   if (S.accounts.length === 1) S.sel = { accId: S.accounts[0].id, path: S.sel.path };
   S.loading = S.accounts.length > 0;
-  renderHead(); renderNav(); renderList(); renderFoot();
+  renderHead(); renderNav(); renderList(); renderSyncStatus();
   // Account display and cached mail do not depend on optional startup settings/draft.
   const sync = IS_COMPOSE_WINDOW ? Promise.resolve() : Promise.all([refreshFolders(), loadList()]);
   const optional = (name, stage, fallback, ...args) => call(name, ...args).catch(() => {
@@ -1026,6 +1253,7 @@ async function loadAccounts() {
     optional('settings:get', 'settings', {}, true), optional('draft:get', 'draft', null),
   ]);
   S.localDraft = draft;
+  S.hidden = settings.hiddenFolders && typeof settings.hiddenFolders === 'object' ? settings.hiddenFolders : {};
   const savedOrder = Array.isArray(settings.accountOrder) ? settings.accountOrder : [];
   const accountOrder = ['xynu.edu.cn', 'gmail.com', '163.com', 'qq.com'];
   const accountRank = (a) => {
@@ -1056,11 +1284,22 @@ if (IS_COMPOSE_WINDOW) {
   guard(loadAccounts);
 } else {
 $('nav').addEventListener('click', (e) => {
+  const gear = e.target.closest('[data-gear]');
+  if (gear) return guard(() => showAccountMenu(gear.dataset.gear));
   const it = e.target.closest('.nav-item');
   if (it) select(it.dataset.acc || null, it.dataset.path);
 });
+$('acct-head').addEventListener('click', (e) => {
+  const gear = e.target.closest('[data-gear]');
+  if (gear) guard(() => showAccountMenu(gear.dataset.gear));
+});
 $('nav').addEventListener('contextmenu', (event) => guard(() => showFolderMenu(event)));
 $('list').addEventListener('contextmenu', (event) => guard(() => showMessageMenu(event)));
+$('selection-bar').addEventListener('click', (e) => {
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (act === 'clear-selection') { S.selectedKeys.clear(); updateMessageSelection(); }
+  else if (act?.startsWith('bulk-')) runMessageAction(act.slice(5), selectedMessages());
+});
 
 $('list').addEventListener('click', (e) => {
   const act = e.target.closest('[data-act]')?.dataset.act;
@@ -1077,10 +1316,21 @@ $('list').addEventListener('click', (e) => {
   if (!row) return;
   const m = S.messages.find((x) => keyOf(x) === row.dataset.key);
   if (m) {
-    const toggle = e.ctrlKey || e.metaKey || e.target.matches('.row-check');
-    selectMessage(m, toggle, e.shiftKey);
-    if (!toggle && !e.shiftKey) openMessage(m);
+    const checkbox = e.target.matches('.row-check');
+    const toggle = e.ctrlKey || e.metaKey || checkbox;
+    if (!toggle && !e.shiftKey) {
+      S.selectedKeys.clear();
+      S.anchorKey = keyOf(m);
+      openMessage(m);
+      updateMessageSelection();
+    } else selectMessage(m, toggle, e.shiftKey, !checkbox);
   }
+});
+$('list').addEventListener('dblclick', (e) => {
+  if (e.ctrlKey || e.metaKey || e.shiftKey || e.target.closest('input,button,[data-act]')) return;
+  const row = e.target.closest('.row[data-key]');
+  const item = row && S.messages.find((m) => keyOf(m) === row.dataset.key);
+  if (item) openReaderWindow(item);
 });
 $('list').addEventListener('keydown', (e) => {
   if (e.target.closest('[data-act="edit-draft"]') && ['Enter', ' '].includes(e.key)) {
@@ -1099,7 +1349,8 @@ $('read-pane').addEventListener('click', async (e) => {
   const act = e.target.closest('[data-act]')?.dataset.act;
   const m = S.cur;
   switch (act) {
-    case 'close': return closeMessage();
+    case 'close': return IS_READER_WINDOW ? window.close() : closeMessage();
+    case 'popout': return openReaderWindow();
     case 'prev': return move(-1);
     case 'next': return move(1);
     case 'reply': return replyTo(false);
@@ -1126,9 +1377,26 @@ function fillFrameNow(allow) {
 
 $('btn-compose').onclick = () => openCompose();
 $('btn-settings').onclick = openSettings;
-$('btn-refresh').onclick = () => {
-  refreshFolders();
-  loadList();
+$('btn-refresh').onclick = async () => {
+  if (S.refreshing) return;
+  const button = $('btn-refresh');
+  S.refreshing = true;
+  button.disabled = true;
+  button.classList.add('refreshing');
+  button.title = '正在刷新邮件…';
+  button.setAttribute('aria-busy', 'true');
+  renderSyncStatus();
+  try {
+    await Promise.all([guard(refreshFolders), guard(loadList)]);
+  } finally {
+    S.refreshing = false;
+    button.disabled = false;
+    button.classList.remove('refreshing');
+    button.title = '刷新';
+    button.removeAttribute('aria-busy');
+    renderList();
+    renderSyncStatus();
+  }
 };
 $('btn-unread').onclick = () => {
   S.unreadOnly = !S.unreadOnly;
@@ -1159,25 +1427,25 @@ $('search-input').addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || $('modal-root').innerHTML) return;
+  if (document.activeElement?.matches('input:not([type="checkbox"]),textarea,select,[contenteditable="true"]') || $('modal-root').innerHTML) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
-    e.preventDefault(); S.selectedKeys = new Set(visibleMessages().map(keyOf)); renderList(); return;
+    if (IS_READER_WINDOW) return;
+    e.preventDefault(); S.selectedKeys = new Set(visibleMessages().map(keyOf)); updateMessageSelection(); return;
   }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
-  if (S.selectedKeys.size > 1 && ['Delete', '#', 'e', '!', 's', 'u'].includes(e.key)) {
+  if (['Delete', '#', 'e', '!', 's', 'u'].includes(e.key)) {
     e.preventDefault();
-    return runMessageAction({ Delete: 'trash', '#': 'trash', e: 'archive', '!': 'junk', s: 'star', u: 'unread' }[e.key]);
+    const items = actionMessages();
+    const action = e.key === 's' ? (items.length && items.every((m) => m.flagged) ? 'unstar' : 'star')
+      : { Delete: 'trash', '#': 'trash', e: 'archive', '!': 'junk', u: 'unread' }[e.key];
+    return runMessageAction(action, items);
   }
   switch (e.key) {
     case 'j': case 'ArrowDown': e.preventDefault(); return S.curKey ? move(1) : visibleMessages()[0] && openMessage(visibleMessages()[0]);
     case 'k': case 'ArrowUp': e.preventDefault(); return move(-1);
-    case 'Escape': if (S.selectedKeys.size) { S.selectedKeys.clear(); renderList(); } return closeMessage();
-    case 'Delete': case '#': return runMessageAction('trash');
-    case 'e': return moveAway('archive');
-    case '!': return moveAway('junk');
-    case 's': return toggleStar();
-    case 'u': return markUnread();
-    case 'r': return replyTo(false);
+    case 'Escape': if (IS_READER_WINDOW) return window.close(); S.selectedKeys.clear(); S.anchorKey = null; return closeMessage();
+    case 'Enter': return openReaderWindow(actionMessages().length === 1 ? actionMessages()[0] : null);
+    case 'r': return runMessageAction('reply');
     case 'c': e.preventDefault(); return openCompose();
   }
 });
@@ -1185,18 +1453,58 @@ document.addEventListener('keydown', (e) => {
 // ---------- 主进程事件 ----------
 let changedTimer;
 window.api.on('mail:changed', ({ accId }) => {
+  if (IS_READER_WINDOW) return;
   clearTimeout(changedTimer);
   changedTimer = setTimeout(() => {
     refreshFolders(accId ? [accId] : undefined);
     if (!S.search && (!accId || isUnified() || S.sel.accId === accId)) loadList();
   }, 600);
 });
+function applyMessageUpdate(update) {
+  const matches = (m) => m && m.accId === update.accId && m.path === update.path && update.uids.includes(m.uid);
+  const rows = S.messages.filter(matches);
+  let countsChanged = false;
+  for (const row of rows) {
+    const folder = folderMeta(row.accId, row.path);
+    if (folder && update.removed && row.seen === false) {
+      folder.unseen = Math.max(0, (folder.unseen || 0) - 1);
+      countsChanged = true;
+    } else if (folder && !update.removed && typeof update.seen === 'boolean' && row.seen !== update.seen) {
+      folder.unseen = Math.max(0, (folder.unseen || 0) + (update.seen ? -1 : 1));
+      countsChanged = true;
+    }
+    if (typeof update.seen === 'boolean') row.seen = update.seen;
+    if (typeof update.flagged === 'boolean') row.flagged = update.flagged;
+    if (update.removed) S.selectedKeys.delete(keyOf(row));
+  }
+  const current = S.messages.find((m) => keyOf(m) === S.curKey) || S.cur;
+  if (matches(current)) {
+    if (update.removed) {
+      if (IS_READER_WINDOW) { window.close(); return; }
+      closeMessage(false);
+    } else if (S.cur && typeof update.flagged === 'boolean') S.cur.flagged = update.flagged;
+  }
+  if (update.removed) { S.messages = S.messages.filter((m) => !matches(m)); renderList(); }
+  else if (S.unreadOnly && update.seen === false) renderList();
+  else updateMessageSelection();
+  renderReader();
+  if (!IS_READER_WINDOW) {
+    renderNav();
+    updateUnreadCount();
+    // Counts belong to the account, even when the changed message is not in this list.
+    if (countsChanged || update.removed || (typeof update.seen === 'boolean'
+        && (rows.length < new Set(update.uids).size || !folderMeta(update.accId, update.path)))) refreshFolders([update.accId]);
+  }
+}
+window.api.on('message:updated', applyMessageUpdate);
+window.api.on('mail:flags', ({ accId, path, uid, seen, flagged }) => applyMessageUpdate({ accId, path, uids: [uid], seen, flagged }));
 window.api.on('acct:status', ({ accId, status }) => {
   S.status[accId] = status;
-  renderFoot();
+  renderSyncStatus();
   renderNav();
 });
 window.api.on('mail:open', async ({ accId, path, uid }) => {
+  if (IS_READER_WINDOW) return;
   if (!isUnified()) S.sel = { accId, path };
   S.search = '';
   if (uid) {
@@ -1218,6 +1526,7 @@ window.api.on('mail:open', async ({ accId, path, uid }) => {
 });
 window.api.on('app:compose', () => openCompose());
 window.api.on('draft:changed', async () => {
+  if (IS_READER_WINDOW) return;
   const draft = await guard(() => call('draft:get'));
   if (draft === undefined) return;
   updateLocalDraft(draft);
@@ -1226,7 +1535,7 @@ window.api.on('draft:changed', async () => {
 
 // 兜底：每 3 分钟刷新一次（IDLE 掉线时也不会落下）
 setInterval(() => {
-  if (document.hidden) return;
+  if (IS_READER_WINDOW || document.hidden) return;
   refreshFolders();
   if (!S.search) loadList();
 }, 180000);
@@ -1234,7 +1543,7 @@ setInterval(() => {
 renderHead();
 renderReader();
 renderList();
-renderFoot();
+renderSyncStatus();
 function initPaneResizing() {
   const defaults = { sidebar: 236, list: 410 };
   let preferred = { ...defaults };
@@ -1296,6 +1605,6 @@ function initPaneResizing() {
   apply();
 }
 
-initPaneResizing();
-guard(loadAccounts);
+if (IS_READER_WINDOW) guard(loadReaderWindow);
+else { initPaneResizing(); guard(loadAccounts); }
 }

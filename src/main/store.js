@@ -6,10 +6,16 @@ const crypto = require('crypto');
 
 const file = (name) => path.join(app.getPath('userData'), name);
 
+// This process is the only writer, so file contents are kept in memory after the first read.
+const texts = new Map();
+const secrets = new Map();
+
 function readJson(name, fallback, strict = false) {
   try {
-    return JSON.parse(fs.readFileSync(file(name), 'utf8'));
+    if (!texts.has(name)) texts.set(name, fs.readFileSync(file(name), 'utf8'));
+    return JSON.parse(texts.get(name));
   } catch (error) {
+    texts.delete(name);
     if (strict && error.code !== 'ENOENT') {
       throw Object.assign(new Error('本地账户文件暂时无法读取，请重试；原文件未修改。'), { code: error.code || 'INVALID_JSON' });
     }
@@ -20,8 +26,10 @@ function readJson(name, fallback, strict = false) {
 function writeJson(name, data) {
   const f = file(name);
   fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.writeFileSync(f + '.tmp', JSON.stringify(data, null, 2));
+  const text = JSON.stringify(data, null, 2);
+  fs.writeFileSync(f + '.tmp', text);
   fs.renameSync(f + '.tmp', f);
+  texts.set(name, text);
 }
 
 function encrypt(text) {
@@ -33,7 +41,8 @@ function encrypt(text) {
 
 function decrypt(value) {
   if (value.startsWith('enc:')) {
-    return safeStorage.decryptString(Buffer.from(value.slice(4), 'base64'));
+    if (!secrets.has(value)) secrets.set(value, safeStorage.decryptString(Buffer.from(value.slice(4), 'base64')));
+    return secrets.get(value);
   }
   return Buffer.from(value.replace(/^plain:/, ''), 'base64').toString('utf8');
 }

@@ -30,7 +30,7 @@ async function checkStore() {
     if (blocked && args[0] === file) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
     return fs.readFileSync(...args);
   } };
-  const store = load('src/main/store.js', { electron, fs: disk });
+  let store = load('src/main/store.js', { electron, fs: disk });
   assert.throws(() => store.listAccounts(), { code: 'EBUSY' });
   assert.throws(() => store.saveAccount({ id: 'b', email: 'b@example.com', pass: 'x' }), { code: 'EBUSY' });
   assert.equal(fs.readFileSync(file, 'utf8'), original, 'failed read must never overwrite account file');
@@ -39,10 +39,12 @@ async function checkStore() {
   assert.throws(() => store.getAccount('a'), /credential unavailable/);
   assert(!Object.hasOwn(store.listAccounts()[0], 'pass'));
   fs.writeFileSync(file, '{broken');
+  store = load('src/main/store.js', { electron, fs: disk }); // A new process must validate its initial disk contents.
   assert.throws(() => store.listAccounts(), { code: 'INVALID_JSON' });
   fs.writeFileSync(file, original);
   fs.mkdirSync(path.join(location, 'mail-cache'), { recursive: true });
   fs.unlinkSync(file);
+  store = load('src/main/store.js', { electron, fs: disk });
   assert.throws(() => store.listAccounts(), { code: 'ACCOUNTS_MISSING' });
   fs.writeFileSync(file, original);
 }
@@ -96,14 +98,15 @@ async function checkPrefetch() {
     async getMailboxLock(folder, options) { assert.equal(options.readOnly, true); return { release() {} }; }
     async search() { return [2]; }
     async *fetch(ids, query) {
-      assert.equal(query.source, true, 'new mail must fetch full source');
+      assert.equal(query.size, true, 'new mail must inspect size before deciding to prefetch');
       yield { uid: 2, flags: new Set(), envelope: { subject: 'New example', from: [{ address: 'sender@example.com' }], to: [] },
-        source: Buffer.from('From: sender@example.com\r\nTo: a@example.com\r\nSubject: New example\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nBackground cached body') };
+        size: 150 };
     }
+    async fetchOne() { return { source: Buffer.from('From: sender@example.com\r\nTo: a@example.com\r\nSubject: New example\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nBackground cached body') }; }
     messageFlagsAdd() { throw new Error('prefetch must never change read flags'); }
     close() { this.usable = false; this.emit('close'); }
   }
-  const mail = load('src/main/mail.js', { imapflow: { ImapFlow: FakeImap }, './cache': {
+  const mail = load('src/main/mail.js', { electron: { app: { getVersion: () => 'fixture' } }, './oauth': {}, imapflow: { ImapFlow: FakeImap }, './cache': {
     ...cache,
     writeBody: async (...args) => {
       if (failWrite) throw Object.assign(new Error('disk busy'), { code: 'EBUSY' });

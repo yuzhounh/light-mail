@@ -1,14 +1,19 @@
 // IMAP / SMTP 逻辑：收信、读信、操作、发信，以及 IDLE 即时监听。
 const crypto = require('crypto');
+const { app } = require('electron');
 const { ImapFlow } = require('imapflow');
-const { simpleParser } = require('mailparser');
-const nodemailer = require('nodemailer');
-const MailComposer = require('nodemailer/lib/mail-composer');
-const { JSDOM } = require('jsdom');
-const createDOMPurify = require('dompurify');
 const cache = require('./cache');
+const oauth = require('./oauth');
 
-const DOMPurify = createDOMPurify(new JSDOM('').window);
+// Heavy libraries load on first use so startup does not wait for them.
+const lazy = (load) => { let value; return () => (value ??= load()); };
+const parser = lazy(() => require('mailparser').simpleParser);
+const simpleParser = (...args) => parser()(...args);
+const purifier = lazy(() => require('dompurify')(new (require('jsdom').JSDOM)('').window));
+const mailer = lazy(() => require('nodemailer'));
+const MailComposer = lazy(() => require('nodemailer/lib/mail-composer'));
+// New-mail bodies larger than this are not prefetched; they download when opened.
+const PREFETCH_LIMIT = 2 * 1024 * 1024;
 
 const SPECIAL_LABEL = {
   '\\Inbox': '收件箱',
@@ -23,14 +28,20 @@ const SPECIAL_LABEL = {
 };
 const SPECIAL_ORDER = ['\\Inbox', '\\Flagged', '\\Drafts', '\\Sent', '\\All', '\\Archive', '\\Important', '\\Junk', '\\Trash'];
 
-function newClient(acc) {
+// OAuth 账户每次连接前取一个有效的访问令牌；密码账户直接用授权码。
+async function imapAuth(acc) {
+  if (acc.authType === 'oauth') return { user: acc.user, accessToken: await oauth.getAccessToken(acc) };
+  return { user: acc.user, pass: acc.pass };
+}
+
+async function newClient(acc) {
   const client = new ImapFlow({
     host: acc.imap.host,
     port: acc.imap.port,
     secure: acc.imap.secure,
-    auth: { user: acc.user, pass: acc.pass },
+    auth: await imapAuth(acc),
     logger: false,
-    clientInfo: { name: 'Light Mail', version: '0.1.5', vendor: 'personal' },
+    clientInfo: { name: 'Light Mail', version: app.getVersion(), vendor: 'personal' },
   });
   client.on('error', () => {});
   return client;
@@ -40,23 +51,23 @@ function newClient(acc) {
 const ops = new Map();
 
 async function getClient(acc) {
-  const e = ops.get(acc.id);
-  if (e && (e.client.usable || e.connecting)) return e.connecting || e.client;
-  const client = newClient(acc);
-  const connecting = client
-    .connect()
-    .then(() => {
-      client.on('close', () => {
-        if (ops.get(acc.id)?.client === client) ops.delete(acc.id);
-      });
-      return client;
-    })
-    .catch((err) => {
-      ops.delete(acc.id);
-      throw err;
+  const existing = ops.get(acc.id);
+  if (existing) return existing.connecting;
+  const entry = { client: null };
+  entry.connecting = (async () => {
+    const client = await newClient(acc);
+    entry.client = client;
+    await client.connect();
+    client.on('close', () => {
+      if (ops.get(acc.id) === entry) ops.delete(acc.id);
     });
-  ops.set(acc.id, { client, connecting });
-  return connecting;
+    return client;
+  })().catch((err) => {
+    if (ops.get(acc.id) === entry) ops.delete(acc.id);
+    throw err;
+  });
+  ops.set(acc.id, entry);
+  return entry.connecting;
 }
 
 async function withMailbox(acc, path, fn, readOnly = false) {
@@ -72,11 +83,11 @@ async function withMailbox(acc, path, fn, readOnly = false) {
 function dropClient(accId) {
   const e = ops.get(accId);
   ops.delete(accId);
-  if (e) e.client.close();
+  if (e) e.client?.close();
 }
 
 async function testAccount(acc) {
-  const client = newClient(acc);
+  const client = await newClient(acc);
   try {
     await client.connect();
   } finally {
@@ -89,7 +100,7 @@ async function testAccount(acc) {
   let smtpOk = true;
   let smtpError = '';
   try {
-    await smtpTransport(acc).verify();
+    await (await smtpTransport(acc)).verify();
   } catch (e) {
     smtpOk = false;
     smtpError = e.message;
@@ -98,6 +109,14 @@ async function testAccount(acc) {
 }
 
 // ---------- 文件夹 ----------
+const folderCache = new Map(); // accId -> { at, folders }
+
+// Actions only need folder paths and roles; reuse a recent listing instead of LIST + STATUS each time.
+async function knownFolders(acc) {
+  const saved = folderCache.get(acc.id);
+  return saved && Date.now() - saved.at < 10 * 60 * 1000 ? saved.folders : listFolders(acc);
+}
+
 async function listFolders(acc) {
   const client = await getClient(acc);
   const list = await client.list({ statusQuery: { unseen: true } });
@@ -117,11 +136,12 @@ async function listFolders(acc) {
     const ib = b.specialUse ? SPECIAL_ORDER.indexOf(b.specialUse) : 99;
     return ia - ib || a.path.localeCompare(b.path);
   });
+  folderCache.set(acc.id, { at: Date.now(), folders });
   return folders;
 }
 
 async function findFolder(acc, specialUses) {
-  const folders = await listFolders(acc);
+  const folders = await knownFolders(acc);
   for (const su of specialUses) {
     const f = folders.find((x) => x.specialUse === su);
     if (f) return f.path;
@@ -191,6 +211,8 @@ async function listMessages(acc, path, { limit = 50, search = '' } = {}) {
     acc,
     path,
     async (client) => {
+      // 同一文件夹的锁可能复用旧状态，先向服务器同步再确定拉取范围。
+      await client.noop();
       const exists = client.mailbox.exists;
       if (!exists) {
         const result = { messages: [], total: 0 };
@@ -207,7 +229,18 @@ async function listMessages(acc, path, { limit = 50, search = '' } = {}) {
         items = uids.length ? await collect(acc, path, client, uids, { uid: true }) : [];
       } else {
         const start = Math.max(1, exists - limit + 1);
-        items = await collect(acc, path, client, `${start}:${exists}`, {});
+        const saved = await cache.readList(acc.id, path, { limit: Number.MAX_SAFE_INTEGER });
+        const sameGeneration = saved?.uidValidity === String(client.mailbox.uidValidity);
+        const previews = new Map(sameGeneration ? (saved.messages || []).filter((m) => m.preview).map((m) => [m.uid, m.preview]) : []);
+        const raw = [];
+        for await (const m of client.fetch(`${start}:${exists}`, { uid: true, envelope: true, flags: true, internalDate: true })) raw.push(m);
+        const missing = raw.filter((m) => !previews.has(m.uid)).map((m) => m.uid);
+        if (missing.length) {
+          const heads = [];
+          for await (const m of client.fetch(missing, { uid: true, source: { maxLength: 16384 } }, { uid: true })) heads.push(m);
+          for (const m of heads) previews.set(m.uid, m.source ? await makePreview(m.source) : '');
+        }
+        items = raw.map((m) => toItem(acc, path, m, previews.get(m.uid) || ''));
       }
       items.sort((a, b) => new Date(b.date) - new Date(a.date));
       const result = { messages: items, total: exists };
@@ -229,7 +262,7 @@ function sanitize(html, atts) {
       out = out.split(`cid:${a.cid}`).join(uri);
     }
   }
-  return DOMPurify.sanitize(out, { ADD_TAGS: ['style'], FORCE_BODY: true, ADD_ATTR: ['target'] });
+  return purifier().sanitize(out, { ADD_TAGS: ['style'], FORCE_BODY: true, ADD_ATTR: ['target'] });
 }
 
 function unsubscribeUrl(parsed) {
@@ -315,7 +348,7 @@ async function setFlag(acc, path, uids, flag, add) {
 async function moveTo(acc, path, uids, kind, allowPermanent = false) {
   const dest = await findFolder(acc, kind === 'archive' ? ['\\Archive', '\\All'] : kind === 'junk' ? ['\\Junk'] : ['\\Trash']);
   const range = [].concat(uids).join(',');
-  const folders = await listFolders(acc);
+  const folders = await knownFolders(acc);
   const cur = folders.find((f) => f.path === path);
   return withMailbox(acc, path, async (client) => {
     if (kind === 'trash' && cur?.specialUse === '\\Trash') {
@@ -333,7 +366,8 @@ async function moveTo(acc, path, uids, kind, allowPermanent = false) {
 
 async function moveMessages(acc, folder, uids, destination) {
   if (folder === destination) throw new Error('目标文件夹与原文件夹相同');
-  const folders = await listFolders(acc);
+  let folders = await knownFolders(acc);
+  if (!folders.some((f) => f.path === destination)) folders = await listFolders(acc);
   if (!folders.some((f) => f.path === destination)) throw new Error('目标文件夹不存在');
   return withMailbox(acc, folder, async (client) => {
     await client.messageMove([].concat(uids).join(','), destination, { uid: true });
@@ -352,13 +386,21 @@ async function markFolderRead(acc, folder) {
 }
 
 async function editFolder(acc, operation, folder, value) {
+  folderCache.delete(acc.id);
   const client = await getClient(acc);
   const folders = await client.list();
   const current = folders.find((f) => f.path === folder);
   if (operation !== 'create' && (!current || current.specialUse || folder.toUpperCase() === 'INBOX')) {
-    throw new Error('只能重命名或移动自建文件夹');
+    throw new Error('只能重命名、移动或删除自建文件夹');
   }
   const delimiter = current?.delimiter || folders.find((f) => f.delimiter)?.delimiter || '/';
+  if (operation === 'remove') {
+    if (folders.some((f) => f.path.startsWith(folder + delimiter))) throw new Error('请先删除其中的子文件夹');
+    const status = await client.status(folder, { messages: true });
+    if (status.messages > 0) throw new Error('只能删除空文件夹，该文件夹还有 ' + status.messages + ' 封邮件');
+    await client.mailboxDelete(folder);
+    return folder;
+  }
   const name = String(value || '').trim();
   let destination;
   if (operation === 'move') {
@@ -383,13 +425,11 @@ async function editFolder(acc, operation, folder, value) {
 }
 
 // ---------- 发信 ----------
-function smtpTransport(acc) {
-  return nodemailer.createTransport({
-    host: acc.smtp.host,
-    port: acc.smtp.port,
-    secure: acc.smtp.secure,
-    auth: { user: acc.user, pass: acc.pass },
-  });
+async function smtpTransport(acc) {
+  const auth = acc.authType === 'oauth'
+    ? { type: 'OAuth2', user: acc.user, accessToken: await oauth.getAccessToken(acc) }
+    : { user: acc.user, pass: acc.pass };
+  return mailer().createTransport({ host: acc.smtp.host, port: acc.smtp.port, secure: acc.smtp.secure, auth });
 }
 
 async function sendMessage(acc, p) {
@@ -406,12 +446,12 @@ async function sendMessage(acc, p) {
     attachments: (p.attachments || []).map((f) => ({ path: f })),
     messageId: `<${crypto.randomUUID()}@${domain}>`,
   };
-  await smtpTransport(acc).sendMail(mail);
+  await (await smtpTransport(acc)).sendMail(mail);
   if (acc.saveSent !== false) {
     try {
       const sent = await findFolder(acc, ['\\Sent']);
       if (sent) {
-        const raw = await new MailComposer(mail).compile().build();
+        const raw = await new (MailComposer())(mail).compile().build();
         const client = await getClient(acc);
         await client.append(sent, raw, ['\\Seen']);
       }
@@ -431,9 +471,9 @@ function startWatcher(acc, hooks, lastUidStart) {
     let delay = 5000;
     let lastUid = lastUidStart;
     while (!w.stopped) {
-      const client = newClient(acc);
-      w.client = client;
       try {
+        const client = await newClient(acc);
+        w.client = client;
         await client.connect();
         const lock = await client.getMailboxLock('INBOX', { readOnly: true });
         delay = 5000;
@@ -464,11 +504,19 @@ function startWatcher(acc, hooks, lastUidStart) {
               );
               if (!found.length) continue;
               const fresh = [];
-              for await (const m of client.fetch(found, { uid: true, envelope: true, flags: true, source: true }, { uid: true })) {
+              const heads = [];
+              for await (const m of client.fetch(found, { uid: true, envelope: true, flags: true, size: true }, { uid: true })) heads.push(m);
+              for (const m of heads) {
                 // The watcher mailbox is read-only; source uses BODY.PEEK and does not mark mail read.
-                const body = await cacheFetchedMessage(acc, 'INBOX', m.uid, m.source, m.flags, client.mailbox.uidValidity, { strict: true });
-                const preview = (body.text || htmlToText(body.html)).replace(/\s+/g, ' ').trim().slice(0, 140);
-                fresh.push(toItem(acc, 'INBOX', m, preview));
+                if ((m.size || 0) <= PREFETCH_LIMIT) {
+                  const full = await client.fetchOne(String(m.uid), { source: true }, { uid: true });
+                  const body = await cacheFetchedMessage(acc, 'INBOX', m.uid, full.source, m.flags, client.mailbox.uidValidity, { strict: true });
+                  fresh.push(toItem(acc, 'INBOX', m, (body.text || htmlToText(body.html)).replace(/\s+/g, ' ').trim().slice(0, 140)));
+                } else {
+                  // Large mail: only a short head for the preview; the full body downloads when opened.
+                  const head = await client.fetchOne(String(m.uid), { source: { maxLength: 16384 } }, { uid: true });
+                  fresh.push(toItem(acc, 'INBOX', m, head?.source ? await makePreview(head.source) : ''));
+                }
               }
               const previous = await cache.readList(acc.id, 'INBOX', { limit: Number.MAX_SAFE_INTEGER });
               const current = previous?.uidValidity === String(client.mailbox.uidValidity) ? previous.messages || [] : [];
@@ -495,7 +543,7 @@ function startWatcher(acc, hooks, lastUidStart) {
 
         client.on('exists', () => check(true));
         client.on('expunge', () => hooks.changed(acc.id));
-        client.on('flags', () => hooks.changed(acc.id));
+        client.on('flags', (info) => (hooks.flags && info?.uid ? hooks.flags(acc.id, info) : hooks.changed(acc.id)));
         await check(true); // 应用关闭期间到达的邮件
         await new Promise((resolve) => {
           w.wake = resolve;

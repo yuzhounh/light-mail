@@ -1,0 +1,31 @@
+plugins { id 'com.android.application' }
+def signing = new Properties()
+if (rootProject.file('signing.properties').exists()) rootProject.file('signing.properties').withInputStream { signing.load(it) }
+android {
+    namespace 'com.yuzhounh.lightmail'
+    compileSdk 35
+    testBuildType project.hasProperty('liveTests') ? 'release' : 'debug'
+    defaultConfig {
+        applicationId 'com.yuzhounh.lightmail'
+        minSdk 30
+        targetSdk 35
+        versionCode 18
+        versionName '0.2.2'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        testApplicationId project.hasProperty('liveTests') ? 'com.yuzhounh.lightmail.livetest' : 'com.yuzhounh.lightmail.test.test'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    signingConfigs { release { if (signing['storeFile']) { storeFile rootProject.file(signing['storeFile']); storePassword signing['storePassword']; keyAlias signing['keyAlias']; keyPassword signing['keyPassword'] } } }
+    buildTypes { release { if (signing['storeFile']) signingConfig signingConfigs.release }; debug { applicationIdSuffix '.test' } }
+    buildFeatures { buildConfig true }
+    packaging { resources { excludes += ['META-INF/LICENSE*', 'META-INF/NOTICE*'] } }
+}
+dependencies {
+    implementation 'androidx.core:core:1.13.0'
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.2.0'
+    implementation 'com.sun.mail:android-mail:1.6.7'
+    implementation 'com.sun.mail:android-activation:1.6.7'
+    implementation 'org.jsoup:jsoup:1.18.3'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}

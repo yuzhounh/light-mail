@@ -18,10 +18,15 @@ async function main() {
   const location = await fs.mkdtemp(path.join(tmp, 'cache-check-'));
   try {
     const cacheSource = await fs.readFile(path.join(root, 'src/main/cache.js'), 'utf8');
+    let listReads = 0;
+    const countedFs = { ...fs, readFile: async (file, ...args) => {
+      if (String(file).endsWith('list.json')) listReads++;
+      return fs.readFile(file, ...args);
+    } };
     const loadCache = () => {
       const module = { exports: {} };
       vm.runInNewContext(cacheSource, {
-        module, require: (name) => name === 'electron' ? { app: { getPath: () => location } } : require(name),
+        module, require: (name) => name === 'electron' ? { app: { getPath: () => location } } : name === 'fs/promises' ? countedFs : require(name),
       });
       return module.exports;
     };
@@ -33,6 +38,10 @@ async function main() {
     cache = loadCache(); // 模拟重启：新模块仍能读取之前写入的缓存。
     assert.equal((await cache.readList('a', 'INBOX')).messages[0].uid, 1);
     assert.equal((await cache.readBody('a', 'INBOX', 1)).html, '<p>cached</p>');
+    const readsBefore = listReads;
+    await cache.readBody('a', 'INBOX', 1);
+    await cache.writeBody('a', 'INBOX', 2, { ...old, uid: 2, html: '<p>other</p>' }, 10);
+    assert.equal(listReads, readsBefore, 'Repeated body operations must reuse folder metadata');
     assert.equal(await cache.readList('b', 'INBOX'), null);
     assert.equal(await cache.readList('a', 'Trash'), null);
     await cache.updateMessages('a', 'INBOX', [1], { seen: true, flagged: true });
@@ -40,6 +49,10 @@ async function main() {
     assert.equal((await cache.readBody('a', 'INBOX', 1)).flagged, true);
     await cache.writeList('a', 'INBOX', { messages: [old], total: 1 }, 11);
     assert.equal(await cache.readBody('a', 'INBOX', 1), null);
+    const external = loadCache();
+    await external.writeList('a', 'INBOX', { messages: [old], total: 1 }, 1001);
+    assert.equal(await cache.readBody('a', 'INBOX', 2), null, 'An external generation change must invalidate cached metadata');
+    await cache.writeList('a', 'INBOX', { messages: [old], total: 1 }, 11);
     await cache.writeBody('a', 'INBOX', 1, { ...old, html: '<p>new</p>' }, 11);
     await cache.updateMessages('a', 'INBOX', [1], null);
     assert.equal((await cache.readList('a', 'INBOX')).messages.length, 0);
@@ -52,9 +65,10 @@ async function main() {
     const context = {
       S: { accountsState: 'ready', accounts: [{ id: 'a' }, { id: 'b' }], sel: { accId: null, path: 'INBOX' }, limit: 50, search: '', messages: [], folders: {}, errors: [] },
       listToken: 0, msgToken: 0,
+      IS_READER_WINDOW: false,
       isUnified: () => context.S.sel.accId === null,
       accById: (id) => ({ email: id }), keyOf: (m) => `${m.accId}|${m.path}|${m.uid}`,
-      renderList() {}, renderFoot() {}, renderReader() {}, renderNav() {}, totalUnread: () => 0,
+      renderList() {}, renderFoot() {}, renderReader() {}, renderNav() {}, renderSyncStatus() {}, updateMessageSelection() {}, updateUnreadCount() {}, folderMeta: () => null, totalUnread: () => 0,
       closeMessage() { context.S.cur = null; },
       guard: async (fn) => { try { return await fn(); } catch { return undefined; } },
       call: async (name, id) => {

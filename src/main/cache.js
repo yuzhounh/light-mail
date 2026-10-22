@@ -7,6 +7,22 @@ const crypto = require('crypto');
 const hash = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 const directory = (id, folder) => path.join(app.getPath('userData'), 'mail-cache', hash(id), hash(folder));
 const pending = new Map();
+const listMetadata = new Map();
+
+async function readValidity(file) {
+  try {
+    const stat = await fs.stat(file);
+    const stamp = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${stat.ino}`;
+    const cached = listMetadata.get(file);
+    if (cached?.stamp === stamp) return cached.value;
+    const list = await read(file);
+    const value = list ? { uidValidity: list.uidValidity } : null;
+    // A bounded metadata cache never retains the message list or bodies.
+    if (listMetadata.size >= 256) listMetadata.delete(listMetadata.keys().next().value);
+    listMetadata.set(file, { stamp, value });
+    return value;
+  } catch { listMetadata.delete(file); return null; }
+}
 
 async function read(file) {
   try { return JSON.parse(await fs.readFile(file, 'utf8')); } catch { return null; }
@@ -14,9 +30,12 @@ async function read(file) {
 
 function write(file, value) {
   const task = (pending.get(file) || Promise.resolve()).catch(() => {}).then(async () => {
+    // Removed messages delete their cached body instead of leaving a placeholder file.
+    if (value === null) return fs.rm(file, { force: true });
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file + '.tmp', JSON.stringify(value));
     await fs.rename(file + '.tmp', file);
+    listMetadata.delete(file);
   });
   pending.set(file, task);
   task.finally(() => { if (pending.get(file) === task) pending.delete(file); }).catch(() => {});
@@ -38,14 +57,14 @@ async function writeList(id, folder, result, uidValidity, { search = '' } = {}) 
 }
 
 async function readBody(id, folder, uid) {
-  const [saved, list] = await Promise.all([read(bodyFile(id, folder, uid)), read(listFile(id, folder))]);
+  const [saved, list] = await Promise.all([read(bodyFile(id, folder, uid)), readValidity(listFile(id, folder))]);
   if (!saved || (list && saved.uidValidity !== list.uidValidity)) return null;
   return saved.message || null;
 }
 
 async function writeBody(id, folder, uid, message, uidValidity) {
   const file = listFile(id, folder);
-  const list = await read(file);
+  const list = await readValidity(file);
   const validity = String(uidValidity);
   if (!list || list.uidValidity !== validity) {
     // 保留当前服务器的世代标识，旧列表和旧正文不再作为缓存使用。

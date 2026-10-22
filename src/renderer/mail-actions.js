@@ -5,7 +5,13 @@ function selectedMessages() {
   return visibleMessages().filter((m) => S.selectedKeys.has(keyOf(m)));
 }
 
-function selectMessage(item, toggle = false, extend = false) {
+function actionMessages() {
+  if (S.selectedKeys.size) return selectedMessages();
+  const current = S.messages.find((m) => keyOf(m) === S.curKey) || S.cur;
+  return current ? [current] : [];
+}
+
+function selectMessage(item, toggle = false, extend = false, includePreview = true) {
   const key = keyOf(item);
   if (extend && S.anchorKey) {
     const rows = visibleMessages();
@@ -13,16 +19,17 @@ function selectMessage(item, toggle = false, extend = false) {
     const end = rows.findIndex((m) => keyOf(m) === key);
     if (start >= 0 && end >= 0) {
       S.selectedKeys = new Set(rows.slice(Math.min(start, end), Math.max(start, end) + 1).map(keyOf));
-      renderList();
+      updateMessageSelection();
       return;
     }
   }
   if (toggle) {
+    if (includePreview && !S.selectedKeys.size && S.curKey && S.curKey !== key) S.selectedKeys.add(S.curKey);
     if (S.selectedKeys.has(key)) S.selectedKeys.delete(key);
     else S.selectedKeys.add(key);
-  } else S.selectedKeys = new Set([key]);
+  } else S.selectedKeys.clear();
   S.anchorKey = key;
-  renderList();
+  updateMessageSelection();
 }
 
 function inputDialog(title, label, value = '', options = null) {
@@ -38,15 +45,21 @@ function inputDialog(title, label, value = '', options = null) {
   });
 }
 
-async function runMessageAction(action, items = selectedMessages()) {
+async function runMessageAction(action, items = actionMessages()) {
   if (!items.length || messageActionBusy) return;
-  if (['reply', 'replyAll', 'forward', 'open'].includes(action)) {
+  if (['reply', 'replyAll', 'forward', 'open', 'open-window'].includes(action)) {
     if (items.length !== 1) return;
     if (action === 'open') return openMessage(items[0]);
+    if (action === 'open-window') return openReaderWindow(items[0]);
     const item = items[0];
     const detail = await guard(async () => (await call('message:cached', item.accId, item.path, item.uid)) || call('message:get', item.accId, item.path, item.uid));
     if (detail) return action === 'forward' ? forwardMsg(detail) : replyTo(action === 'replyAll', detail);
     return;
+  }
+  if (action === 'trash') {
+    const missing = [...new Set(items.filter((m) => !folderMeta(m.accId, m.path)).map((m) => m.accId))];
+    try { await Promise.all(missing.map(async (id) => { S.folders[id] = await call('folders:list', id); })); }
+    catch (error) { toast(error.message, true); return; }
   }
   const permanent = items.filter((m) => folderMeta(m.accId, m.path)?.specialUse === '\\Trash');
   if (action === 'trash' && permanent.length && !confirm(`将永久删除废纸篓中选中的 ${permanent.length} 封邮件，无法恢复。是否继续？`)) return;
@@ -96,7 +109,7 @@ async function runMessageAction(action, items = selectedMessages()) {
     }
     renderList();
     toast(failures.length ? `已处理 ${completed} 封；${failures.join('；')}` : `已处理 ${completed} 封邮件`, failures.length > 0);
-    await Promise.all([refreshFolders([...new Set(items.map((m) => m.accId))]), loadList()]);
+    if (!IS_READER_WINDOW) await Promise.all([refreshFolders([...new Set(items.map((m) => m.accId))]), loadList()]);
   } catch (err) { toast(err.message, true); }
   finally { messageActionBusy = false; }
 }
@@ -109,20 +122,20 @@ async function showMessageMenu(event) {
   }
   const row = event.target.closest('[data-key]');
   if (row && !S.selectedKeys.has(row.dataset.key)) {
-    S.selectedKeys = new Set([row.dataset.key]); S.anchorKey = row.dataset.key; renderList();
+    S.selectedKeys = new Set([row.dataset.key]); S.anchorKey = row.dataset.key; updateMessageSelection();
   }
   const items = selectedMessages();
   const menu = [];
   if (items.length) {
-    if (items.length === 1) menu.push({ id: 'open', label: '打开' }, { id: 'reply', label: '回复' }, { id: 'replyAll', label: '回复全部' }, { id: 'forward', label: '转发' }, { type: 'separator' });
+    if (items.length === 1) menu.push({ id: 'open', label: '预览' }, { id: 'open-window', label: '在独立窗口打开' }, { id: 'reply', label: '回复' }, { id: 'replyAll', label: '回复全部' }, { id: 'forward', label: '转发' }, { type: 'separator' });
     menu.push({ id: 'read', label: '标为已读' }, { id: 'unread', label: '标为未读' }, { id: 'star', label: '添加星标' }, { id: 'unstar', label: '取消星标' },
       { type: 'separator' }, { id: 'archive', label: '归档' }, { id: 'move', label: '移动到…' }, { id: 'junk', label: '移到垃圾邮件' },
       { id: 'trash', label: items.every((m) => folderMeta(m.accId, m.path)?.specialUse === '\\Trash') ? '永久删除…' : '删除（移到废纸篓）' }, { type: 'separator' });
   }
   menu.push({ id: 'select-all', label: '全选当前已加载邮件', enabled: visibleMessages().length > 0 }, { id: 'clear', label: '取消选择', enabled: items.length > 0 }, { id: 'refresh', label: '刷新' });
   const action = await call('menu:show', menu);
-  if (action === 'select-all') { S.selectedKeys = new Set(visibleMessages().map(keyOf)); renderList(); }
-  else if (action === 'clear') { S.selectedKeys.clear(); renderList(); }
+  if (action === 'select-all') { S.selectedKeys = new Set(visibleMessages().map(keyOf)); updateMessageSelection(); }
+  else if (action === 'clear') { S.selectedKeys.clear(); updateMessageSelection(); }
   else if (action === 'refresh') { refreshFolders(); loadList(); }
   else if (action) await runMessageAction(action, items);
 }

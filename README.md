@@ -9,6 +9,8 @@
 
 ## 下载与运行
 
+本地日常版为 **0.2.2**（Windows / Android code 18），公开 Release 仍为下列 0.1.5。日常完整包与 SHA-256 清单在 `dist/`；本批包含连接退避、缓存读取和手机后台列表查询优化，保留原有独立阅读窗口、未读计数同步、账户及邮件数据。
+
 在 [Releases](https://github.com/yuzhounh/light-mail/releases/latest) 下载：
 
 - `LightMail-Setup-0.1.5-x64.exe`：安装版，可选择安装目录、创建快捷方式；安装完成后由用户自行启动，无需安装 Node.js。
@@ -32,9 +34,9 @@
 
 ## 登录
 
-使用完整邮箱地址和 IMAP/SMTP 授权码或应用专用密码。Gmail 使用 Google 应用专用密码；QQ 和网易邮箱需在网页版开启 IMAP/SMTP 服务并生成授权码。当前不提供 OAuth 登录。
+Gmail 和 Outlook/Hotmail 可选 OAuth 登录（在系统浏览器里授权，需先注册自己的客户端 ID，步骤见 [OAuth 登录说明](docs/oauth.md)）；Outlook 个人账户多已关闭密码登录，实际只能用 OAuth。
 
-个人 Outlook/Hotmail 多数已关闭密码登录，不能保证可连接。客户端不代理或上传邮箱数据，直接连接用户配置的邮件服务器。
+其他邮箱，以及不想用 OAuth 的 Gmail，使用完整邮箱地址和 IMAP/SMTP 授权码或应用专用密码：Gmail 用 Google 应用专用密码；QQ 和网易邮箱需在网页版开启 IMAP/SMTP 服务并生成授权码。客户端不代理或上传邮箱数据，直接连接用户配置的邮件服务器。
 
 ## 本地数据
 
@@ -61,3 +63,12 @@ Windows 包输出到 `dist/`。可通过 `node scripts/check-drafts.js`、`node 
 源码位于 `src/main/` 和 `src/renderer/`；图标在 `assets/`；开发和验证脚本在 `scripts/`。第三方组件的许可证随其依赖分发。
 
 账户启动加载与新邮件缓存的排查记录、修复边界和验证方法见 [启动与缓存维护说明](docs/startup-and-cache.md)。
+
+## Android 客户端
+
+原生 Android 版本位于 `android/`，可独立通过 IMAP/SMTP 收发邮件，不需要电脑保持运行。
+支持多邮箱、离线正文缓存、本地草稿、附件、长按多选与批量处理。手机布局采用浅色渐变、右侧统一导航入口、下拉刷新和可收起的搜索栏，写信使用圆形笔图标按钮。
+
+Android 11 及以上可用；当前本地安装包为 `dist/LightMail-0.1.5-android.apk`，尚未发布到 GitHub Release。
+桌面服务器配置可通过 USB 导入，授权码在手机输入；不会导入桌面的密码、草稿或缓存。
+使用方式、构建步骤、实际测试范围与后台收信限制见 [Android 说明](docs/android.md)。

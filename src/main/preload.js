@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('api', {
     return r.data;
   },
   on(channel, cb) {
-    const allowed = ['mail:changed', 'mail:open', 'acct:status', 'app:compose', 'draft:changed'];
+    const allowed = ['mail:changed', 'mail:open', 'mail:flags', 'message:updated', 'acct:status', 'app:compose', 'draft:changed'];
     if (!allowed.includes(channel)) return;
     ipcRenderer.on(channel, (_e, payload) => cb(payload));
   },

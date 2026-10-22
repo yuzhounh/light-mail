@@ -17,13 +17,15 @@
         <button class="side-btn" id="btn-settings"></button>
       </div>
       <nav id="nav"></nav>
-      <div class="side-foot" id="side-foot"></div>
     </aside>
     <div class="pane-divider" id="sidebar-divider" role="separator" aria-orientation="vertical" aria-label="调整邮箱栏宽度" tabindex="0"></div>
 
     <section id="list-pane">
       <header class="pane-head">
-        <h2 id="list-title">收件箱</h2>
+        <div class="pane-heading">
+          <h2 id="list-title">收件箱</h2>
+          <span class="sync-status" id="sync-status" role="status"></span>
+        </div>
         <div class="head-btns">
           <button class="icon-btn" id="btn-unread" title="只看未读"></button>
           <button class="icon-btn" id="btn-refresh" title="刷新"></button>
@@ -32,6 +34,7 @@
       <div class="search-row" id="search-row" hidden>
         <input id="search-input" type="search" placeholder="搜索主题、发件人、收件人（回车）" />
       </div>
+      <div class="selection-bar" id="selection-bar" hidden></div>
       <div id="list" tabindex="-1"></div>
     </section>
 

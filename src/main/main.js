@@ -1,10 +1,13 @@
-const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, dialog, shell, powerMonitor, nativeImage, nativeTheme, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, dialog, shell, powerMonitor, nativeImage, nativeTheme, screen, net, session } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const store = require('./store');
 const cache = require('./cache');
 const mail = require('./mail');
+const oauth = require('./oauth');
+const crypto = require('crypto');
 const { recordStartup } = require('./diagnostics');
+const { createReaderWindows } = require('./reader-windows');
 
 app.setAppUserModelId('com.personal.mymail');
 app.setName('Light Mail');
@@ -12,9 +15,9 @@ const smokeOutput = process.argv.find((arg) => arg.startsWith('--smoke-test='))?
 // 打包前后保持相同数据目录；发布验证使用独立空目录，避免访问真实邮箱。
 app.setPath('userData', smokeOutput ? path.join(path.dirname(path.resolve(smokeOutput)), 'smoke-profile') : path.join(app.getPath('appData'), 'my-mail'));
 
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
-}
+const primaryInstance = app.requestSingleInstanceLock();
+// A second launch only hands focus to the running instance; it never starts windows or IMAP watchers.
+if (!primaryInstance) app.quit();
 
 let win = null;
 let composeWin = null;
@@ -24,6 +27,12 @@ let tray = null;
 let quitting = false;
 const watchers = new Map();
 const icon = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'assets', 'icon.png'));
+const readers = createReaderWindows({ BrowserWindow, icon, setupZoom, openExternal });
+
+function notifyMessageUpdate(payload) {
+  send('message:updated', payload);
+  readers.notify(payload);
+}
 
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -92,6 +101,7 @@ function createWindow() {
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
+  setupZoom(win.webContents);
 
   win.on('close', (e) => {
     saveWindowState();
@@ -101,6 +111,32 @@ function createWindow() {
     }
   });
   return loaded;
+}
+
+// 界面缩放：Ctrl+= / Ctrl++ / 小键盘 + 放大，Ctrl+- 缩小，Ctrl+0 还原，Ctrl+滚轮同样可用；比例会记住。
+// Electron 没有菜单栏时只有 Ctrl+Shift+= 能放大，所以这里自己接管。
+const ZOOM_STEP = 0.5;
+const ZOOM_MIN = -3;
+const ZOOM_MAX = 5;
+
+function applyZoom(level) {
+  const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(level * 2) / 2));
+  for (const w of [win, composeWin]) if (w && !w.isDestroyed()) w.webContents.setZoomLevel(next);
+  store.setSettings({ zoomLevel: next });
+}
+
+function setupZoom(wc) {
+  const current = () => store.getSettings().zoomLevel || 0;
+  wc.on('did-finish-load', () => wc.setZoomLevel(current()));
+  wc.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || !(input.control || input.meta) || input.alt) return;
+    if (input.key === '=' || input.key === '+') applyZoom(current() + ZOOM_STEP);
+    else if (input.key === '-' || input.key === '_') applyZoom(current() - ZOOM_STEP);
+    else if (input.key === '0') applyZoom(0);
+    else return;
+    event.preventDefault();
+  });
+  wc.on('zoom-changed', (_event, direction) => applyZoom(current() + (direction === 'in' ? ZOOM_STEP : -ZOOM_STEP)));
 }
 
 function openExternal(url) {
@@ -128,6 +164,7 @@ function openComposeWindow(init = {}, resume = false) {
   composeWin.setMenuBarVisibility(false);
   composeWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   composeWin.webContents.on('will-navigate', (event) => event.preventDefault());
+  setupZoom(composeWin.webContents);
   composeWin.once('ready-to-show', () => composeWin?.show());
   composeWin.on('closed', () => { composeWin = null; composeRequest = null; notifyDraftChanged(); });
   composeWin.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), { query: { compose: '1' } });
@@ -194,6 +231,12 @@ function startWatching(acc) {
         changed: (id) => send('mail:changed', { accId: id }),
         saveUid: (id, uid) => store.setLastUid(id, uid),
         newMail: notifyNew,
+        flags: (id, info) => {
+          const seen = info.flags?.has('\\Seen') ?? false;
+          const flagged = info.flags?.has('\\Flagged') ?? false;
+          cache.updateMessages(id, 'INBOX', [info.uid], { seen, flagged }).catch(() => {});
+          send('mail:flags', { accId: id, path: 'INBOX', uid: info.uid, seen, flagged });
+        },
         prefetchError: (error) => recordStartup('new-mail-prefetch', error),
       },
       lastUid
@@ -234,6 +277,7 @@ const accOf = (id) => {
 const api = {
   'compose:open': (init, resume) => openComposeWindow(init, resume),
   'compose:init': () => composeRequest || { init: {}, resume: true },
+  'reader:open': (item) => { accOf(item?.accId); return readers.open(item); },
   'menu:show': (items) => new Promise((resolve) => {
     const menu = Menu.buildFromTemplate(items.map((item) => item.type === 'separator' ? { type: 'separator' }
       : { label: String(item.label), enabled: item.enabled !== false, click: () => resolve(item.id) }));
@@ -257,7 +301,52 @@ const api = {
     startWatching({ ...draft, id });
     return { id, ...result };
   },
+  'accounts:update': async (id, draft) => {
+    const old = store.getAccount(id);
+    const next = { ...old, ...draft, id, email: old.email, alias: old.alias, pass: draft.pass || old.pass };
+    const result = await mail.testAccount(next); // 验证通过才保存，失败时保留原配置
+    stopWatching(id);
+    mail.dropClient(id);
+    store.saveAccount(next);
+    startWatching(next);
+    return { id, ...result };
+  },
+  // OAuth 登录：在系统浏览器里授权。已有同邮箱的密码账户会原地升级为 OAuth，保留别名等设置。
+  'accounts:add-oauth': async (provider, opts = {}) => {
+    const login = await oauth.authorize(provider, opts.hint);
+    const server = oauth.PROVIDERS[provider];
+    const existing = store.listAccounts().find((a) => a.email.toLowerCase() === login.email);
+    if (existing?.authType === 'oauth') throw new Error('这个邮箱已经添加过了；如需重新授权，请在邮箱设置里点“重新登录”');
+    const id = existing?.id || crypto.randomUUID();
+    const acc = {
+      ...(existing ? store.getAccount(id) : {}),
+      id, authType: 'oauth', provider, email: login.email, user: login.email, pass: login.refreshToken,
+      name: opts.name || existing?.name || login.name, imap: server.imap, smtp: server.smtp, saveSent: false,
+    };
+    oauth.seedToken(id, login);
+    const result = await mail.testAccount(acc);
+    if (existing) { stopWatching(id); mail.dropClient(id); }
+    store.saveAccount(acc);
+    startWatching(acc);
+    return { id, email: login.email, ...result };
+  },
+  'accounts:reauth': async (id) => {
+    const old = store.getAccount(id);
+    if (old.authType !== 'oauth') throw new Error('这个账户不是 OAuth 登录');
+    const login = await oauth.authorize(old.provider, old.email);
+    if (login.email !== old.email.toLowerCase()) throw new Error(`登录的是 ${login.email}，与此账户 ${old.email} 不一致`);
+    oauth.seedToken(id, login);
+    stopWatching(id);
+    mail.dropClient(id);
+    const next = { ...old, pass: login.refreshToken };
+    store.saveAccount(next);
+    startWatching(next);
+    return true;
+  },
+  'oauth:cancel': () => oauth.cancelLogin(),
+  'app:version': () => app.getVersion(),
   'accounts:remove': (id) => {
+    oauth.forgetToken(id);
     stopWatching(id);
     mail.dropClient(id);
     store.removeAccount(id);
@@ -268,11 +357,28 @@ const api = {
   'folder:edit': (accId, operation, folder, value) => mail.editFolder(accOf(accId), operation, folder, value),
   'messages:list': (accId, folder, opts) => mail.listMessages(accOf(accId), folder, opts),
   'messages:cached': (accId, folder, opts) => { accOf(accId); return cache.readList(accId, folder, opts); },
-  'message:get': (accId, folder, uid) => mail.getMessage(accOf(accId), folder, uid),
+  'message:get': async (accId, folder, uid) => {
+    const message = await mail.getMessage(accOf(accId), folder, uid);
+    notifyMessageUpdate({ accId, path: folder, uids: [uid], seen: true });
+    return message;
+  },
   'message:cached': (accId, folder, uid) => { accOf(accId); return cache.readBody(accId, folder, uid); },
-  'message:flag': (accId, folder, uids, flag, add) => mail.setFlag(accOf(accId), folder, uids, flag, add),
-  'message:move': (accId, folder, uids, kind, allowPermanent) => mail.moveTo(accOf(accId), folder, uids, kind, allowPermanent),
-  'messages:move-to': (accId, folder, uids, destination) => mail.moveMessages(accOf(accId), folder, uids, destination),
+  'message:flag': async (accId, folder, uids, flag, add) => {
+    const result = await mail.setFlag(accOf(accId), folder, uids, flag, add);
+    const patch = flag === '\\Seen' ? { seen: add } : flag === '\\Flagged' ? { flagged: add } : {};
+    notifyMessageUpdate({ accId, path: folder, uids, ...patch });
+    return result;
+  },
+  'message:move': async (accId, folder, uids, kind, allowPermanent) => {
+    const result = await mail.moveTo(accOf(accId), folder, uids, kind, allowPermanent);
+    notifyMessageUpdate({ accId, path: folder, uids, removed: true });
+    return result;
+  },
+  'messages:move-to': async (accId, folder, uids, destination) => {
+    const result = await mail.moveMessages(accOf(accId), folder, uids, destination);
+    notifyMessageUpdate({ accId, path: folder, uids, removed: true });
+    return result;
+  },
   'message:send': async (accId, payload, draftId) => {
     await mail.sendMessage(accOf(accId), payload);
     try {
@@ -283,9 +389,9 @@ const api = {
       return { draftCleared: false };
     }
   },
-  'attachment:save': async (accId, folder, uid, attId) => {
+  'attachment:save': async (accId, folder, uid, attId, owner) => {
     const att = await mail.getAttachment(accOf(accId), folder, uid, attId);
-    const r = await dialog.showSaveDialog(win, { defaultPath: att.filename });
+    const r = await dialog.showSaveDialog(owner || win, { defaultPath: att.filename });
     if (r.canceled || !r.filePath) return false;
     fs.writeFileSync(r.filePath, att.content);
     return true;
@@ -326,6 +432,8 @@ ipcMain.on('draft:save', (event, draft) => {
 
 ipcMain.handle('api', async (_e, name, ...args) => {
   try {
+    if (name === 'reader:init') return { ok: true, data: readers.init(_e.sender) };
+    if (name === 'attachment:save') args = [...args.slice(0, 4), BrowserWindow.fromWebContents(_e.sender)];
     if (!api[name]) throw new Error('未知接口：' + name);
     return { ok: true, data: await api[name](...args) };
   } catch (err) {
@@ -337,7 +445,14 @@ ipcMain.handle('api', async (_e, name, ...args) => {
 app.on('second-instance', showWindow);
 
 app.whenReady().then(async () => {
+  if (!primaryInstance) return;
   recordStartup('main-ready');
+  // 部分发件方（如 claude.ai）的图片带 Cross-Origin-Resource-Policy: same-origin，会被 file:// 页面拒绝；仅对图片请求去掉该头。
+  session.defaultSession.webRequest.onHeadersReceived({ urls: ['https://*/*', 'http://*/*'], types: ['image'] }, (details, callback) => {
+    const responseHeaders = { ...details.responseHeaders };
+    for (const key of Object.keys(responseHeaders)) if (key.toLowerCase() === 'cross-origin-resource-policy') delete responseHeaders[key];
+    callback({ responseHeaders });
+  });
   await createWindow();
   if (smokeOutput) {
     const result = await win.webContents.executeJavaScript("(async () => ({ title: document.title, bridge: typeof window.api.call === 'function', accounts: (await window.api.call('accounts:list')).length, list: Boolean(document.getElementById('list')) }))()");
@@ -354,8 +469,12 @@ app.whenReady().then(async () => {
     for (const w of watchers.values()) w.reconnect();
     send('mail:changed', {});
   });
+  let networkWasOnline = net.isOnline();
   setInterval(() => {
-    for (const w of watchers.values()) w.reconnect();
+    // Only a network transition may interrupt the watcher's own retry backoff.
+    const online = net.isOnline();
+    if (online && !networkWasOnline) for (const w of watchers.values()) w.reconnect();
+    networkWasOnline = online;
   }, 60000);
 }).catch((err) => {
   if (smokeOutput) fs.writeFileSync(path.resolve(smokeOutput), JSON.stringify({ error: err.message }));
