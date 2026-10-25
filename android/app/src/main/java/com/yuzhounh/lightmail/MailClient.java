@@ -74,6 +74,22 @@ final class MailClient {
         try{store.id(Map.of("name","Light Mail","version",BuildConfig.VERSION_NAME));}catch(MessagingException ignored){}
         return store;
     }
+    /** One reusable IMAP connection per account for syncs and actions, instead of a TLS handshake and login each time. */
+    private static final class Shared {final IMAPStore store;final String fingerprint;Shared(IMAPStore s,String f){store=s;fingerprint=f;}}
+    private final ConcurrentHashMap<String,Shared> shared=new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String,Object> sharedLocks=new ConcurrentHashMap<>();
+    IMAPStore shared(JSONObject a) throws Exception {
+        String id=a.getString("id"),fingerprint=Integer.toHexString(Objects.hash(a.getJSONObject("imap").toString(),a.optString("user",a.getString("email")),accounts.password(a)));
+        synchronized(sharedLocks.computeIfAbsent(id,k->new Object())){
+            // isConnected() sends a NOOP, so a connection the server dropped, or changed account settings, get a new one.
+            Shared current=shared.get(id);if(current!=null&&current.fingerprint.equals(fingerprint)&&current.store.isConnected())return current.store;
+            IMAPStore store=connect(a);shared.put(id,new Shared(store,fingerprint));
+            if(current!=null)try{current.store.close();}catch(MessagingException ignored){}
+            return store;
+        }
+    }
+    /** Keeps the shared connection open; only a connection already replaced by a newer one is closed. */
+    void release(IMAPStore store){for(Shared s:shared.values())if(s.store==store)return;try{store.close();}catch(MessagingException ignored){}}
     void test(JSONObject a) throws Exception {
         IMAPStore store=connect(a);store.close();testSmtp(a);
     }
@@ -84,7 +100,7 @@ final class MailClient {
         finally{try{if(transport.isConnected())transport.close();}catch(MessagingException ignored){}}
     }
     JSONArray folders(JSONObject a) throws Exception {
-        IMAPStore store=connect(a);
+        IMAPStore store=shared(a);
         try{
             JSONArray out=new JSONArray();for(Folder folder:store.getDefaultFolder().list("*")){
                 if((folder.getType()&Folder.HOLDS_MESSAGES)==0)continue;
@@ -95,7 +111,7 @@ final class MailClient {
                 out.put(new JSONObject().put("path",folder.getFullName()).put("label",label).put("special",special).put("unread",Math.max(0,count)));
             }
             cache.saveFolders(a.getString("id"),out);return out;
-        }finally{store.close();}
+        }finally{release(store);}
     }
     /** 部分发件人名经 RFC 2047 解码后仍带一层引号（如 "Qoder"），显示时去掉。 */
     static String clean(String name){String s=name==null?"":name.trim();while(s.length()>=2&&((s.startsWith("\"")&&s.endsWith("\""))||(s.startsWith("'")&&s.endsWith("'"))))s=s.substring(1,s.length()-1).trim();return s;}
@@ -118,7 +134,7 @@ final class MailClient {
     void sync(String id,String folder,boolean notify,int limit) throws Exception {
         String key=id+"|"+folder;if(!syncing.add(key))return;
         try{
-            JSONObject account=accounts.account(id);IMAPStore store=connect(account);
+            JSONObject account=accounts.account(id);IMAPStore store=shared(account);
             try{
                 IMAPFolder box=(IMAPFolder)store.getFolder(folder);box.open(Folder.READ_ONLY);
                 try{
@@ -162,7 +178,7 @@ final class MailClient {
                     for(JSONObject item:notices)SyncService.notifyMail(context,account,item);
                     lastSuccessfulSync.put(key,android.os.SystemClock.elapsedRealtime());
                 }finally{box.close(false);}
-            }finally{store.close();}
+            }finally{release(store);}
         }catch(Exception e){accounts.prefs().edit().putString("status."+id,error(e)).apply();changed();throw e;}
         finally{syncing.remove(key);}
     }
@@ -175,10 +191,10 @@ final class MailClient {
     }
     Decoded read(JSONObject item) throws Exception {
         File file=cache.body(item);if(file.exists())return decode(file);
-        JSONObject a=accounts.account(item.getString("acc"));IMAPStore store=connect(a);
+        JSONObject a=accounts.account(item.getString("acc"));IMAPStore store=shared(a);
         try{IMAPFolder folder=(IMAPFolder)store.getFolder(item.getString("folder"));folder.open(Folder.READ_ONLY);
             try{if(!String.valueOf(folder.getUIDValidity()).equals(item.getString("validity")))throw new Exception("文件夹已更新，请刷新列表");Message m=folder.getMessageByUID(item.getLong("uid"));if(m==null)throw new Exception("邮件已移动或删除");downloadSource(m,file);return decode(file);}finally{folder.close(false);}
-        }finally{store.close();}
+        }finally{release(store);}
     }
     static final class Attachment {String name,type,key;int size;Attachment(String n,String t,String k,int s){name=n;type=t;key=k;size=s;}}
     static final class Decoded {String html="",text="",messageId="",replyTo="",cc="",references="",warning="",baseUrl="";List<Attachment> attachments=new ArrayList<>();Map<String,String> inline=new HashMap<>();}
@@ -235,7 +251,7 @@ final class MailClient {
     void apply(List<JSONObject> items,String action,String target) throws Exception {
         Map<String,List<JSONObject>> groups=new LinkedHashMap<>();for(JSONObject m:items)groups.computeIfAbsent(m.getString("acc")+"|"+m.getString("folder"),k->new ArrayList<>()).add(m);
         for(List<JSONObject> group:groups.values()){
-            JSONObject first=group.get(0),a=accounts.account(first.getString("acc"));IMAPStore store=connect(a);
+            JSONObject first=group.get(0),a=accounts.account(first.getString("acc"));IMAPStore store=shared(a);
             try{IMAPFolder folder=(IMAPFolder)store.getFolder(first.getString("folder"));folder.open(Folder.READ_WRITE);
                 try{
                     if(!String.valueOf(folder.getUIDValidity()).equals(first.getString("validity")))throw new Exception("文件夹已更新，请刷新后再操作");
@@ -253,11 +269,11 @@ final class MailClient {
                     }
                     for(JSONObject item:group){if(flag)cache.update(item.getString("acc"),item.getString("folder"),item.getLong("uid"),action.equals("read")||action.equals("unread")?"seen":"starred",action.equals("read")||action.equals("star"));else cache.remove(item.getString("acc"),item.getString("folder"),item.getLong("uid"));}
                 }finally{folder.close(false);}
-            }finally{store.close();}
+            }finally{release(store);}
         }changed();
     }
     void editFolder(String id,String operation,String folder,String name) throws Exception {
-        JSONObject a=accounts.account(id);IMAPStore store=connect(a);
+        JSONObject a=accounts.account(id);IMAPStore store=shared(a);
         try{Folder source=store.getFolder(folder);if(!operation.equals("create")){
             if(folder.equalsIgnoreCase("INBOX"))throw new Exception("不能修改收件箱");
             for(int i=0;i<cache.folders(id).length();i++){JSONObject f=cache.folders(id).getJSONObject(i);if(f.optString("path").equals(folder)&&!f.optString("special").isEmpty())throw new Exception("不能重命名或删除系统文件夹");}
@@ -265,7 +281,7 @@ final class MailClient {
         if(operation.equals("create")){Folder dest=store.getFolder(name);if(dest.exists()||!dest.create(Folder.HOLDS_MESSAGES))throw new Exception("文件夹已存在或无法创建");}
         else if(operation.equals("rename")){if(store.getFolder(name).exists()||!source.renameTo(store.getFolder(name)))throw new Exception("重命名失败");}
         else if(operation.equals("remove")){if(source.getMessageCount()>0)throw new Exception("请先移走文件夹内的邮件");if(!source.delete(false))throw new Exception("删除文件夹失败");}
-        }finally{store.close();}folders(a);changed();
+        }finally{release(store);}folders(a);changed();
     }
     boolean send(JSONObject draft) throws Exception {
         JSONObject a=accounts.account(draft.getString("acc")),s=a.getJSONObject("smtp");Session session=session(a);MimeMessage message=new MimeMessage(session);
@@ -286,7 +302,7 @@ final class MailClient {
         finally{try{if(transport.isConnected())transport.close();}catch(MessagingException ignored){}}
         // SMTP success is final: an optional Sent append failure must never cause a duplicate retry.
         boolean sentSaved=true;
-        if(!a.getString("email").toLowerCase().endsWith("@gmail.com"))try{String sent=special(a,"\\Sent");IMAPStore store=connect(a);try{store.getFolder(sent).appendMessages(new Message[]{message});}finally{store.close();}}catch(Exception ignored){sentSaved=false;}
+        if(!a.getString("email").toLowerCase().endsWith("@gmail.com"))try{String sent=special(a,"\\Sent");IMAPStore store=shared(a);try{store.getFolder(sent).appendMessages(new Message[]{message});}finally{release(store);}}catch(Exception ignored){sentSaved=false;}
         cache.deleteDraft(draft.getString("id"));changed();return sentSaved;
     }
 }
