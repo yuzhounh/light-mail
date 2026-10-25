@@ -32,6 +32,9 @@ final class MailClient {
     final MailCache cache;
     private final Set<String> syncing=ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<String,Long> lastSuccessfulSync=new ConcurrentHashMap<>();
+    /** Cached mail older than the sync window is checked against the server at most this often per folder. */
+    private static final long FULL_RECONCILE_INTERVAL=6*60*60*1000L;
+    private final ConcurrentHashMap<String,Long> lastFullReconcile=new ConcurrentHashMap<>();
     static synchronized MailClient get(Context c){if(instance==null)instance=new MailClient(c.getApplicationContext());return instance;}
     MailClient(Context c){context=c;accounts=new AccountStore(c);cache=new MailCache(c);}
     void changed(){context.sendBroadcast(new android.content.Intent(CHANGED).setPackage(context.getPackageName()));}
@@ -124,11 +127,21 @@ final class MailClient {
                     boolean initial=!accounts.prefs().getString(generationKey,"").equals(validity);
                     long high=initial?0:accounts.prefs().getLong(highKey,0),newHigh=high;
                     int count=box.getMessageCount();if(count==0){cache.reconcile(id,folder,Collections.emptySet());cache.folderUnread(id,folder,0);accounts.prefs().edit().putLong(highKey,0).putString(generationKey,validity).putString("status."+id,"已同步").commit();lastSuccessfulSync.put(key,android.os.SystemClock.elapsedRealtime());changed();return;}
-                    // Only verify UIDs we have cached instead of downloading every UID in the folder.
-                    long[] known=cache.uids(id,folder);if(known.length>0){Set<Long> present=new HashSet<>();for(Message m:box.getMessagesByUID(known))if(m!=null&&!m.isExpunged())present.add(box.getUID(m));cache.reconcile(id,folder,present);}
+                    // Only verify UIDs we have cached instead of downloading every UID in the folder. The full check
+                    // covers mail older than the window and runs at most every few hours; see the window check below.
+                    long[] known=cache.uids(id,folder);long now=android.os.SystemClock.elapsedRealtime();Long lastFull=lastFullReconcile.get(key);
+                    boolean fullCheck=known.length>0&&(lastFull==null||now-lastFull>=FULL_RECONCILE_INTERVAL);
+                    if(fullCheck){Set<Long> present=new HashSet<>();for(Message m:box.getMessagesByUID(known))if(m!=null&&!m.isExpunged())present.add(box.getUID(m));cache.reconcile(id,folder,present);lastFullReconcile.put(key,now);}
                     Message[] messages=box.getMessages(Math.max(1,count-Math.max(1,limit)+1),count);
                     FetchProfile profile=new FetchProfile();profile.add(FetchProfile.Item.ENVELOPE);profile.add(FetchProfile.Item.FLAGS);profile.add(UIDFolder.FetchProfileItem.UID);profile.add(IMAPFolder.FetchProfileItem.SIZE);box.fetch(messages,profile);
-                    List<JSONObject> notices=new ArrayList<>();
+                    if(!fullCheck&&known.length>0){
+                        // UIDs grow with sequence numbers, so the window holds every message whose UID is at least its oldest
+                        // UID: a cached UID in that range missing from the window was removed on the server.
+                        Set<Long> present=new HashSet<>();long oldest=Long.MAX_VALUE;
+                        for(Message m:messages)if(!m.isExpunged()){long uid=box.getUID(m);present.add(uid);oldest=Math.min(oldest,uid);}
+                        for(long uid:known)if(uid<oldest)present.add(uid);cache.reconcile(id,folder,present);
+                    }
+                    List<JSONObject> notices=new ArrayList<>(),changedItems=new ArrayList<>();
                     for(int i=0;i<messages.length;i++){
                         Message m=messages[i];if(m.isExpunged()||m.isSet(Flags.Flag.DELETED))continue;long uid=box.getUID(m);
                         JSONObject item=summary(account,folder,validity,m,uid);File file=cache.body(item);
@@ -138,9 +151,11 @@ final class MailClient {
                             if(!file.exists())downloadSource(m,file);
                             try{Decoded body=decode(file);String preview=body.text.replaceAll("\\s+"," ").trim();item.put("preview",preview.substring(0,Math.min(140,preview.length())));if(!body.warning.isEmpty())item.put("bodyWarning",body.warning);}catch(Exception malformed){item.put("preview","此邮件部分内容暂无法解析，原文已保留").put("bodyWarning",true);}
                         }
-                        cache.put(item);newHigh=Math.max(newHigh,uid);
+                        // Unchanged rows are not rewritten; the rest are stored together after the loop.
+                        if(previous==null||!previous.toString().equals(item.toString()))changedItems.add(item);newHigh=Math.max(newHigh,uid);
                         if(notify&&newMail&&!item.getBoolean("seen"))notices.add(item);
                     }
+                    cache.putAll(changedItems);
                     try{cache.folderUnread(id,folder,Math.max(0,box.getUnreadMessageCount()));}catch(MessagingException ignored){}
                     accounts.prefs().edit().putLong(highKey,newHigh).putString(generationKey,validity).commit();
                     accounts.prefs().edit().putString("status."+id,"已同步").apply();changed();

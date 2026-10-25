@@ -38,6 +38,11 @@ final class MailCache extends SQLiteOpenHelper {
         ContentValues v=new ContentValues();v.put("acc",item.getString("acc"));v.put("folder",item.getString("folder"));v.put("uid",item.getLong("uid"));v.put("validity",item.getString("validity"));v.put("date",item.optLong("date"));v.put("data",item.toString());
         getWritableDatabase().insertWithOnConflict("messages",null,v,SQLiteDatabase.CONFLICT_REPLACE);
     }
+    /** One transaction for a whole sync window instead of a journal commit per message. */
+    synchronized void putAll(List<JSONObject> items) throws Exception {
+        if(items.isEmpty())return;SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try{for(JSONObject item:items)put(item);db.setTransactionSuccessful();}finally{db.endTransaction();}
+    }
     synchronized List<JSONObject> list(String acc,String folder,String search,boolean unread,int limit) throws Exception {
         List<JSONObject> result=new ArrayList<>();String selection=acc==null?"folder='INBOX'":"acc=? AND folder=?";
         String[] args=acc==null?null:new String[]{acc,folder};
