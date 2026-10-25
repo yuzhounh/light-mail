@@ -18,7 +18,9 @@ import javax.crypto.spec.GCMParameterSpec;
 
 final class AccountStore {
     private final SharedPreferences preferences;
-    AccountStore(Context context) { preferences=context.getSharedPreferences("lightmail",Context.MODE_PRIVATE); }
+    private final java.util.function.Consumer<String> accountChanged;
+    AccountStore(Context context) { this(context,id->{}); }
+    AccountStore(Context context,java.util.function.Consumer<String> changed) { preferences=context.getSharedPreferences("lightmail",Context.MODE_PRIVATE);accountChanged=changed; }
     SharedPreferences prefs() { return preferences; }
     synchronized List<JSONObject> accounts() throws Exception {
         JSONArray array=new JSONArray(preferences.getString("accounts","[]"));
@@ -48,8 +50,9 @@ final class AccountStore {
         }
         return (SecretKey)store.getKey("lightmail-accounts",null);
     }
-    synchronized void save(JSONObject record,String password) throws Exception {
+    void save(JSONObject record,String password) throws Exception {
         JSONObject a=new JSONObject(record.toString());
+        synchronized(this){
         if(a.optString("email").trim().isEmpty()) throw new Exception("请输入邮箱地址");
         if(a.optString("id").isEmpty()) a.put("id",UUID.randomUUID().toString());
         if(password!=null) {
@@ -64,8 +67,11 @@ final class AccountStore {
         for(int i=0;i<list.size();i++) if(list.get(i).getString("id").equals(a.getString("id"))) { list.set(i,a);found=true; }
         if(!found) list.add(a);
         persist(list);
+        }
+        // Notify outside the preferences lock: connection checkout reads accounts under its own lock.
+        accountChanged.accept(a.getString("id"));
     }
-    synchronized void importConfiguration(JSONArray records) throws Exception {
+    void importConfiguration(JSONArray records) throws Exception {
         List<JSONObject> existing=accounts();
         for(int i=0;i<records.length();i++) {
             JSONObject input=records.getJSONObject(i),a=new JSONObject();
@@ -82,7 +88,7 @@ final class AccountStore {
             save(a,null);
         }
     }
-    synchronized void remove(String id) throws Exception { List<JSONObject> list=accounts();list.removeIf(a->a.optString("id").equals(id));persist(list); }
+    void remove(String id) throws Exception { synchronized(this){List<JSONObject> list=accounts();list.removeIf(a->a.optString("id").equals(id));persist(list);}accountChanged.accept(id); }
     synchronized void move(String id,int direction) throws Exception {
         List<JSONObject> list=accounts();for(int i=0;i<list.size();i++)if(list.get(i).optString("id").equals(id)){int target=i+direction;if(target>=0&&target<list.size())java.util.Collections.swap(list,i,target);break;}persist(list);
     }

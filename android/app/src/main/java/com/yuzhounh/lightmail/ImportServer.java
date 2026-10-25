@@ -21,7 +21,7 @@ final class ImportServer {
             socket.setSoTimeout(10000);InputStream in=socket.getInputStream();ByteArrayOutputStream header=new ByteArrayOutputStream();int value;String text="";
             while((value=in.read())!=-1){header.write(value);if(header.size()>8192)throw new IOException("Header too long");text=header.toString("US-ASCII");if(text.endsWith("\r\n\r\n"))break;}
             String answer;int status=200;
-            if(text.startsWith("GET /info "))answer=new JSONObject().put("app","Light Mail").put("version","0.1.5").put("configurationOnly",true).toString();
+            if(text.startsWith("GET /info "))answer=new JSONObject().put("app","Light Mail").put("version",BuildConfig.VERSION_NAME).put("configurationOnly",true).toString();
             else if(text.startsWith("POST /accounts ")){
                 int length=-1;for(String line:text.split("\r\n"))if(line.toLowerCase().startsWith("content-length:"))length=Integer.parseInt(line.substring(line.indexOf(':')+1).trim());
                 if(length<0||length>65536)throw new IOException("Invalid payload size");byte[] bytes=new byte[length];int read=0,n;while(read<length&&(n=in.read(bytes,read,length-read))>0)read+=n;if(read!=length)throw new EOFException();

@@ -42,6 +42,9 @@ public class MainActivity extends Activity {
     private MailClient.Decoded decoded;
     private String pendingAttachment;
     private String navigationPage="";
+    private int drawerScrollY=0;
+    private int folderScrollY=0;
+    private String folderAccountId="";
     private int navigationToken=0;
     private LinearLayout listRoot,headerBar,searchWrap;
     private EditText searchField;
@@ -121,7 +124,7 @@ public class MainActivity extends Activity {
     private LinearLayout pageRoot(String name,Runnable back){
         LinearLayout root=Ui.column(this),bar=Ui.row(this);bar.setPadding(Ui.dp(this,18),Ui.dp(this,6),Ui.dp(this,12),Ui.dp(this,6));
         TextView label=Ui.title(this,name);label.setTextSize(18);label.setSingleLine(true);label.setEllipsize(android.text.TextUtils.TruncateAt.END);bar.addView(label,new LinearLayout.LayoutParams(0,-2,1));
-        boolean dismiss=navigationPage.equals("mailboxes");ImageButton close=Ui.icon(this,dismiss?MailIcon.CLOSE:MailIcon.BACK,dismiss?"关闭邮箱与设置":"返回",back);bar.addView(close);root.addView(bar);return root;
+        boolean help=navigationPage.equals("help"),dismiss=navigationPage.equals("mailboxes");ImageButton close=Ui.icon(this,help||dismiss?MailIcon.CLOSE:MailIcon.BACK,help?"关闭使用说明":dismiss?"关闭邮箱与设置":"返回",back);bar.addView(close);root.addView(bar);return root;
     }
     private void restoreList(){
         navigationPage="";navigationToken++;reader=false;
@@ -192,11 +195,11 @@ public class MainActivity extends Activity {
     private void sync(){if(drafts){statusText();return;}try{for(JSONObject a:mail.accounts.accounts()){if(accountId!=null&&!a.optString("id").equals(accountId))continue;if(a.optString("secret").isEmpty())continue;String path=accountId==null?"INBOX":folder;int limit=messageLimit;background(MailClient.IO,()->{mail.sync(a.getString("id"),path,path.equalsIgnoreCase("INBOX"),limit);if(mail.cache.folders(a.getString("id")).length()==0)mail.folders(a);},null);}}catch(Exception e){Ui.toast(this,MailClient.error(e));}statusText();}
     private void startBackground(){try{boolean any=false;for(JSONObject a:mail.accounts.accounts())any|=!a.optString("secret").isEmpty();if(any&&realtimeEnabled()&&!SyncService.running)SyncService.start(this);SyncJob.schedule(this);}catch(Exception ignored){}}
 
-    private void drawer(){drawer(0);}
+    private void drawer(){drawer(navigationPage.isEmpty()?0:drawerScrollY);}
     private void drawer(int scrollY){try{
         if(navigationPage.isEmpty()&&!reader&&list!=null){savedListPosition=list.onSaveInstanceState();if(headerAnimator!=null)headerAnimator.cancel();applyHeaderFraction(headerCollapsed?1:0);}
         navigationPage="mailboxes";navigationToken++;reader=false;
-        LinearLayout root=pageRoot("邮箱与设置",this::restoreList);ScrollView scroll=new ScrollView(this);LinearLayout content=Ui.column(this);content.setPadding(Ui.dp(this,16),Ui.dp(this,8),Ui.dp(this,16),Ui.dp(this,24));scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        LinearLayout root=pageRoot("邮箱与设置",this::restoreList);ScrollView scroll=new ScrollView(this);drawerScrollY=scrollY;scroll.setOnScrollChangeListener((v,x,y,oldX,oldY)->drawerScrollY=y);LinearLayout content=Ui.column(this);content.setPadding(Ui.dp(this,16),Ui.dp(this,8),Ui.dp(this,16),Ui.dp(this,24));scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         content.addView(navigationRow(MailIcon.INBOXES,"所有收件箱",0,accountId==null&&!drafts&&!unread,()->select(null,"INBOX","所有收件箱",false)));
         int allUnread=0;for(JSONObject a:mail.accounts.accounts())allUnread+=inboxUnread(a);content.addView(navigationRow(MailIcon.MAIL,"未读邮件",allUnread,accountId==null&&!drafts&&unread,()->select(null,"INBOX","未读邮件",false,true)));
         int allDrafts=mail.cache.drafts(null).size();content.addView(navigationRow(MailIcon.DRAFT,"本地草稿",allDrafts,accountId==null&&drafts,()->select(null,"@drafts","本地草稿",true)));
@@ -221,7 +224,7 @@ public class MainActivity extends Activity {
             if(cached.length()==0){content.addView(navigationRow(MailIcon.SEND,"发件箱",0,false,()->sent(a)));content.addView(navigationRow(MailIcon.FOLDER,"加载其他文件夹",0,false,()->{if(a.optString("secret").isEmpty()){editAccount(a);return;}int token=navigationToken;background(()->mail.folders(a),()->{if(token==navigationToken)drawer(scroll.getScrollY());});}));}
         }
         navigationDivider(content);content.addView(navigationRow(MailIcon.MAIL,"添加邮箱",0,false,()->editAccount(null)));content.addView(navigationRow(MailIcon.REFRESH,"从电脑导入配置",0,false,this::startImport));
-        navigationDivider(content);content.addView(realtimeRow());
+        navigationDivider(content);content.addView(realtimeRow());content.addView(navigationRow(MailIcon.MAIL,"使用说明",0,false,this::showHelp));
         refreshFolderCounts(scroll);
         navigationDivider(content);ImageView appLogo=new ImageView(this);appLogo.setImageResource(R.drawable.app_icon);appLogo.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);LinearLayout.LayoutParams logoParams=new LinearLayout.LayoutParams(Ui.dp(this,40),Ui.dp(this,40));logoParams.gravity=Gravity.CENTER_HORIZONTAL;logoParams.topMargin=Ui.dp(this,16);content.addView(appLogo,logoParams);TextView version=Ui.text(this,"Light Mail "+appVersion(),12,Ui.MUTED);version.setGravity(Gravity.CENTER_HORIZONTAL);version.setPadding(Ui.dp(this,12),Ui.dp(this,8),Ui.dp(this,12),Ui.dp(this,8));content.addView(version,new LinearLayout.LayoutParams(-1,-2));Ui.root(this,root);scroll.post(()->scroll.scrollTo(0,scrollY));
     }catch(Exception e){Ui.toast(this,MailClient.error(e));}}
@@ -235,8 +238,23 @@ public class MainActivity extends Activity {
         LinearLayout row=navigationRow(MailIcon.REFRESH,"后台实时收信",0,false,()->{});Switch toggle=new Switch(this);toggle.setChecked(realtimeEnabled());toggle.setContentDescription("后台实时收信");
         toggle.setOnCheckedChangeListener((b,on)->{mail.accounts.prefs().edit().putBoolean("realtime",on).apply();if(on)startBackground();else stopService(new Intent(this,SyncService.class));});
         row.setOnClickListener(v->toggle.toggle());row.addView(toggle);
-        TextView hint=Ui.text(this,"开启时保持连接，新邮件即时提醒，通知栏显示常驻提示；关闭后约每 15 分钟检查一次，更省电。",12,Ui.MUTED);hint.setPadding(Ui.dp(this,12),0,Ui.dp(this,12),Ui.dp(this,8));
-        LinearLayout box=Ui.column(this);box.addView(row);box.addView(hint);return box;
+        return row;
+    }
+    private void showHelp(){
+        navigationPage="help";navigationToken++;reader=false;
+        LinearLayout root=pageRoot("使用说明",this::drawer);ScrollView scroll=new ScrollView(this);LinearLayout content=Ui.column(this);content.setPadding(Ui.dp(this,24),Ui.dp(this,8),Ui.dp(this,24),Ui.dp(this,32));scroll.addView(content);
+        helpSection(content,"连接邮箱","打开“邮箱与设置 → 添加邮箱”，选择邮箱服务商，填写完整邮箱地址和授权码或应用专用密码，再点“连接”。QQ、163 等邮箱需先在邮箱网页端开启 IMAP/SMTP；Gmail 使用应用专用密码。自定义邮箱可在“服务器设置”中填写 IMAP、SMTP、端口与加密方式。只点“保存配置”会保留配置，尚未填写授权码的邮箱不会开始收信。");
+        helpSection(content,"从电脑导入","用 USB 将手机连接电脑，在手机点“从电脑导入配置”，再由电脑端配合传送邮箱配置。此功能需要电脑的 USB 调试连接；手机上的接收入口开放两分钟，确认邮箱列表后才导入。导入不包含密码，已有密码会保留；新邮箱需在手机填写授权码。");
+        helpSection(content,"查看与搜索","“所有收件箱”和“未读邮件”可汇总多个邮箱，也可在“邮箱与设置”中选择单个邮箱及其文件夹。下拉邮件列表手动同步，向下滚动加载更早邮件。搜索框搜索本机已缓存的邮件。打开邮件可阅读、回复、转发和保存附件；图片未加载成功时可点图片提示中的“点击重试”。");
+        helpSection(content,"写信与草稿","点邮件列表右下角的写信按钮，选择发件邮箱，填写收件人、主题与正文，可添加附件。输入后自动保存到本机，关闭写信页后可从“本地草稿”继续。手机本地草稿与“服务器草稿”分开显示。点“发送”提交邮件；发送失败时草稿会保留。");
+        helpSection(content,"批量操作与文件夹","长按一封邮件进入多选，随后点击其他邮件继续选择；顶部勾选按钮可全选当前列表。底部可标为已读、移动、删除，更多菜单提供未读、星标、归档和垃圾邮件等操作。邮箱旁的齿轮可编辑授权码、管理文件夹、重命名、排序或移除本机账户。关闭文件夹显示开关只隐藏入口，服务器邮件保持原状；移除本机账户也不会删除服务器邮件。");
+        helpSection(content,"后台收信与通知","开启“后台实时收信”会保持收件箱连接，并显示常驻通知，新邮件到达时提醒；关闭后改为约每 15 分钟由系统安排检查，耗电更少。系统省电限制可能延后检查与通知。需要及时提醒时，请允许 Light Mail 通知及后台运行；也可随时回到列表下拉同步。");
+        helpSection(content,"连接异常","先确认网络可用、邮箱已开启 IMAP/SMTP、授权码仍有效，再在邮箱旁的齿轮中编辑配置并重新连接。授权码更新后需在手机重新填写。提示“邮件已发送，已发送文件夹保存失败”时不要重复发送，可到邮箱网页端确认。");
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));Ui.root(this,root);
+    }
+    private void helpSection(LinearLayout content,String heading,String body){
+        TextView title=Ui.title(this,heading);title.setTextSize(17);title.setPadding(0,Ui.dp(this,16),0,Ui.dp(this,10));content.addView(title);
+        TextView text=Ui.text(this,body,16,Ui.TEXT);text.setTextIsSelectable(true);text.setLineSpacing(Ui.dp(this,4),1);content.addView(text,new LinearLayout.LayoutParams(-1,-2));
     }
     private void navigationDivider(LinearLayout content){View line=new View(this);line.setBackgroundColor(Ui.BORDER);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,Ui.dp(this,1));lp.setMargins(Ui.dp(this,12),Ui.dp(this,12),Ui.dp(this,12),Ui.dp(this,8));content.addView(line,lp);}
     private String folderTitle(JSONObject f){if(f.optString("path").equalsIgnoreCase("INBOX"))return "收件箱";return switch(mailboxFolderType(f)){case "\\Sent"->"发件箱";case "\\Drafts"->"服务器草稿";case "\\Trash"->"废纸篓";case "\\Junk"->"垃圾邮件";case "\\All"->"所有邮件";case "\\Archive"->"归档";default->f.optString("path");};}
@@ -244,15 +262,15 @@ public class MainActivity extends Activity {
     private Set<String> hiddenFolders(JSONObject a){Set<String> out=new HashSet<>();try{JSONArray array=new JSONArray(mail.accounts.prefs().getString("hidden."+a.optString("id"),"[]"));for(int i=0;i<array.length();i++)out.add(array.getString(i));}catch(Exception ignored){}return out;}
     private void setFolderHidden(JSONObject a,String path,boolean hide){Set<String> hidden=hiddenFolders(a);if(hide)hidden.add(path);else hidden.remove(path);mail.accounts.prefs().edit().putString("hidden."+a.optString("id"),new JSONArray(hidden).toString()).apply();}
     private void manageFolders(JSONObject a,JSONArray records) throws Exception {
-        navigationPage="folders";navigationToken++;LinearLayout root=pageRoot(AccountStore.alias(a)+" · 文件夹",this::drawer);ScrollView scroll=new ScrollView(this);LinearLayout box=Ui.column(this);box.setPadding(Ui.dp(this,16),Ui.dp(this,4),Ui.dp(this,16),Ui.dp(this,16));scroll.addView(box);
-        TextView hint=Ui.text(this,"关闭开关后，该文件夹不在“邮箱与设置”中显示；服务器上的邮件不受影响。",12,Ui.MUTED);hint.setPadding(Ui.dp(this,12),Ui.dp(this,4),Ui.dp(this,12),Ui.dp(this,8));box.addView(hint);
+        int scrollY=navigationPage.equals("folders")&&a.optString("id").equals(folderAccountId)?folderScrollY:0;
+        navigationPage="folders";navigationToken++;folderAccountId=a.optString("id");folderScrollY=scrollY;LinearLayout root=pageRoot(AccountStore.alias(a)+" · 文件夹",this::drawer);ScrollView scroll=new ScrollView(this);scroll.setOnScrollChangeListener((v,x,y,oldX,oldY)->folderScrollY=y);LinearLayout box=Ui.column(this);box.setPadding(Ui.dp(this,16),Ui.dp(this,4),Ui.dp(this,16),Ui.dp(this,16));scroll.addView(box);
         List<JSONObject> sorted=new ArrayList<>();for(int i=0;i<records.length();i++)sorted.add(records.getJSONObject(i));sorted.sort(Comparator.comparingInt((JSONObject f)->f.optString("path").equalsIgnoreCase("INBOX")?-1:mailboxFolderOrder(f)));
         Set<String> hidden=hiddenFolders(a);
         for(JSONObject f:sorted){String path=f.optString("path");boolean inbox=path.equalsIgnoreCase("INBOX");LinearLayout row=navigationRow(folderGlyph(f),folderTitle(f),0,false,()->folderActions(a,f));
             if(inbox){TextView fixed=Ui.text(this,"固定显示",12,Ui.MUTED);row.addView(fixed);}
             else{Switch toggle=new Switch(this);toggle.setChecked(!hidden.contains(path));toggle.setContentDescription("在邮箱与设置中显示 "+folderTitle(f));toggle.setOnCheckedChangeListener((b,on)->setFolderHidden(a,path,!on));row.addView(toggle);}
             box.addView(row);}
-        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));root.addView(Ui.button(this,"新建文件夹",()->folderEdit(a,"create",null)));Ui.root(this,root);
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));root.addView(Ui.button(this,"新建文件夹",()->folderEdit(a,"create",null)));Ui.root(this,root);scroll.post(()->scroll.scrollTo(0,scrollY));
     }
     private void folderActions(JSONObject a,JSONObject f){Runnable open=()->select(a.optString("id"),f.optString("path"),AccountStore.alias(a)+" · "+folderTitle(f),false);
         if(!mailboxFolderType(f).isEmpty()||f.optString("path").equalsIgnoreCase("INBOX")){open.run();return;}
@@ -269,7 +287,7 @@ public class MainActivity extends Activity {
         }
         select(account.getString("id"),mail.special(account,"\\Sent"),AccountStore.alias(account)+" · 发件箱",false);
     }catch(Exception e){Ui.toast(this,MailClient.error(e));}}
-    private void accountMenu(JSONObject a){Ui.dialog(this).setTitle(AccountStore.alias(a)).setItems(new String[]{"编辑配置 / 授权码","管理文件夹","重命名","上移","下移","移除本机账户"},(d,index)->{try{if(index==0)editAccount(a);else if(index==1)folders(a,null);else if(index==2)renameAccount(a);else if(index<5){mail.accounts.move(a.getString("id"),index==3?-1:1);drawer();}else Ui.dialog(this).setTitle("移除此邮箱？").setMessage("只移除本机账户配置，不会删除服务器邮件。").setNegativeButton("取消",null).setPositiveButton("移除",(x,w)->{try{mail.accounts.remove(a.getString("id"));select(null,"INBOX","所有收件箱",false);restartBackground();}catch(Exception e){Ui.toast(this,MailClient.error(e));}}).show();}catch(Exception e){Ui.toast(this,MailClient.error(e));}}).show();}
+    private void accountMenu(JSONObject a){Ui.dialog(this).setTitle(AccountStore.alias(a)).setItems(new String[]{"编辑配置 / 授权码","管理文件夹","重命名","上移","下移","移除本机账户"},(d,index)->{try{if(index==0)editAccount(a);else if(index==1)folders(a,null);else if(index==2)renameAccount(a);else if(index<5){mail.accounts.move(a.getString("id"),index==3?-1:1);drawer();}else Ui.dialog(this).setTitle("移除此邮箱？").setMessage("只移除本机账户配置，不会删除服务器邮件。").setNegativeButton("取消",null).setPositiveButton("移除",(x,w)->{try{int scrollY=drawerScrollY;mail.accounts.remove(a.getString("id"));select(null,"INBOX","所有收件箱",false);drawer(scrollY);restartBackground();}catch(Exception e){Ui.toast(this,MailClient.error(e));}}).show();}catch(Exception e){Ui.toast(this,MailClient.error(e));}}).show();}
 
     private String appVersion(){try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}catch(Exception e){return "";}}
     private void restartBackground(){stopService(new Intent(this,SyncService.class));handler.postDelayed(this::startBackground,500);}
@@ -299,21 +317,22 @@ public class MainActivity extends Activity {
         }
         view.setOnItemLongClickListener((p,v,index,id)->{if(chosen!=null)return false;JSONObject f=records.optJSONObject(index);if(!f.optString("special").isEmpty()){Ui.toast(this,"系统文件夹不能修改");return true;}Ui.dialog(this).setTitle(f.optString("label")).setItems(new String[]{"重命名 / 移动","删除空文件夹"},(d,choice)->folderEdit(a,choice==0?"rename":"remove",f)).show();return true;});
     }catch(Exception e){Ui.toast(this,MailClient.error(e));}}
-    private void folderEdit(JSONObject a,String operation,JSONObject folder){EditText name=Ui.input(this,"文件夹名称或完整路径",folder==null?"":folder.optString("path"),false);Ui.dialog(this).setTitle(operation.equals("remove")?"删除空文件夹？":operation.equals("create")?"新建文件夹":"重命名 / 移动文件夹").setView(name).setNegativeButton("取消",null).setPositiveButton("确定",(d,w)->{String value=name.getText().toString().trim();if(!operation.equals("remove")&&value.isEmpty()){Ui.toast(this,"请输入名称");return;}background(()->mail.editFolder(a.getString("id"),operation,folder==null?"":folder.getString("path"),value),()->{if(navigationPage.equals("mailboxes"))drawer();else folders(a,null);});}).show();}
+    private void folderEdit(JSONObject a,String operation,JSONObject folder){EditText name=Ui.input(this,"文件夹名称或完整路径",folder==null?"":folder.optString("path"),false);Ui.dialog(this).setTitle(operation.equals("remove")?"删除空文件夹？":operation.equals("create")?"新建文件夹":"重命名 / 移动文件夹").setView(name).setNegativeButton("取消",null).setPositiveButton("确定",(d,w)->{String value=name.getText().toString().trim();if(!operation.equals("remove")&&value.isEmpty()){Ui.toast(this,"请输入名称");return;}int token=navigationToken;background(()->mail.editFolder(a.getString("id"),operation,folder==null?"":folder.getString("path"),value),()->{if(token!=navigationToken)return;if(navigationPage.equals("mailboxes"))drawer();else folders(a,null);});}).show();}
     private void compose(){try{if(mail.accounts.accounts().isEmpty()){editAccount(null);return;}List<JSONObject> saved=mail.cache.drafts(accountId);if(saved.isEmpty()&&accountId!=null)saved=mail.cache.drafts(null);if(!saved.isEmpty()){openDraft(saved.get(0).getString("id"));return;}Intent intent=new Intent(this,ComposeActivity.class);if(accountId!=null)intent.putExtra("acc",accountId);startActivity(intent);}catch(Exception e){Ui.toast(this,MailClient.error(e));}}
     private void openDraft(String id){startActivity(new Intent(this,ComposeActivity.class).putExtra("draftId",id));}
     private void handleNotification(Intent intent){if(intent==null||!intent.hasExtra("openUid"))return;String acc=intent.getStringExtra("openAcc");long uid=intent.getLongExtra("openUid",-1);intent.removeExtra("openUid");select(acc,"INBOX","收件箱",false);for(JSONObject m:rows)if(m.optLong("uid")==uid){openMessage(m);break;}}
     private void openMessage(JSONObject item){reader=true;readerItem=item;decoded=null;int token=++readerToken;
         LinearLayout root=Ui.column(this),bar=Ui.row(this);bar.setPadding(Ui.dp(this,8),Ui.dp(this,8),Ui.dp(this,8),Ui.dp(this,8));bar.addView(Ui.icon(this,android.R.drawable.ic_media_previous,"返回邮件列表",this::buildList));bar.addView(Ui.title(this,"邮件"),new LinearLayout.LayoutParams(0,-2,1));bar.addView(Ui.icon(this,android.R.drawable.ic_menu_delete,"移到废纸篓",()->confirmTrash(List.of(readerItem))));bar.addView(Ui.icon(this,android.R.drawable.ic_menu_more,"邮件操作",this::readerMenu));root.addView(bar);
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);LinearLayout content=Ui.column(this);scroll.addView(content,new ScrollView.LayoutParams(-1,-2));root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        LinearLayout head=Ui.column(this);Ui.pad(head,16);TextView subject=Ui.title(this,item.optString("subject"));subject.setTextSize(18);subject.setPadding(0,0,0,Ui.dp(this,8));head.addView(subject);
-        TextView sender=Ui.text(this,MailClient.clean(item.optString("from"))+" <"+item.optString("fromAddress")+">",14,Ui.TEXT);sender.setTextIsSelectable(true);sender.setPadding(0,0,0,Ui.dp(this,6));head.addView(sender);
+        LinearLayout head=Ui.column(this);Ui.pad(head,16);TextView subject=Ui.title(this,item.optString("subject"));subject.setTextSize(15);subject.setPadding(0,0,0,Ui.dp(this,8));head.addView(subject);
+        TextView sender=Ui.text(this,MailClient.clean(item.optString("from"))+" <"+item.optString("fromAddress")+">",15,Ui.TEXT);sender.setTextIsSelectable(true);sender.setPadding(0,0,0,Ui.dp(this,6));head.addView(sender);
         TextView recipients=Ui.text(this,"收件人："+item.optString("to"),12,Ui.MUTED);recipients.setTextIsSelectable(true);recipients.setPadding(0,0,0,Ui.dp(this,4));head.addView(recipients);
         head.addView(Ui.text(this,new SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.getDefault()).format(new Date(item.optLong("date"))),12,Ui.MUTED));content.addView(head);
         LinearLayout commands=Ui.row(this);commands.setPadding(Ui.dp(this,16),0,Ui.dp(this,16),Ui.dp(this,12));commands.addView(readerButton("回复",()->reply(false,false)),new LinearLayout.LayoutParams(0,Ui.dp(this,48),1));commands.addView(readerButton("回复全部",()->reply(true,false)),spacedButtonParams());commands.addView(readerButton("转发",()->reply(false,true)),spacedButtonParams());content.addView(commands);
+        LinearLayout attachmentList=Ui.column(this);attachmentList.setPadding(Ui.dp(this,16),0,Ui.dp(this,16),Ui.dp(this,12));attachmentList.setVisibility(View.GONE);content.addView(attachmentList);
         Set<String> imageUrls=new HashSet<>(),failedImages=new HashSet<>();String[] readerHtml={null};int[] autoRetry={0};Button imageRetry=Ui.button(this,"图片未加载，点击重试",()->{});imageRetry.setVisibility(View.GONE);content.addView(imageRetry);
         WebView web=new WebView(this);web.setBackgroundColor(Color.WHITE);web.setMinimumHeight(Ui.dp(this,160));web.setNestedScrollingEnabled(false);web.setVerticalScrollBarEnabled(false);web.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(false);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setDomStorageEnabled(false);settings.setSupportZoom(true);settings.setBuiltInZoomControls(true);settings.setDisplayZoomControls(false);settings.setUseWideViewPort(true);settings.setLoadWithOverviewMode(true);settings.setSafeBrowsingEnabled(true);settings.setTextZoom(90);settings.setLoadsImagesAutomatically(true);settings.setBlockNetworkImage(false);
+        WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(false);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setDomStorageEnabled(false);settings.setSupportZoom(true);settings.setBuiltInZoomControls(true);settings.setDisplayZoomControls(false);settings.setUseWideViewPort(true);settings.setLoadWithOverviewMode(true);settings.setSafeBrowsingEnabled(true);settings.setTextZoom(Math.round(100 * getResources().getConfiguration().fontScale));settings.setLoadsImagesAutomatically(true);settings.setBlockNetworkImage(false);
         imageRetry.setOnClickListener(v->{if(readerHtml[0]==null)return;autoRetry[0]=2;failedImages.clear();imageRetry.setVisibility(View.GONE);settings.setCacheMode(WebSettings.LOAD_NO_CACHE);web.loadDataWithBaseURL(MailImages.ORIGIN,readerHtml[0],"text/html","UTF-8",null);});
         web.setWebViewClient(new WebViewClient(){
             // Only failures that a retry can fix count: timeouts, connection problems, 5xx/408/429. Missing (404/403/410)
@@ -344,9 +363,20 @@ public class MainActivity extends Activity {
             try{
                 MailClient.Decoded body=mail.read(item);
                 runOnUiThread(()->{if(!reader||token!=readerToken)return;decoded=body;
+                    attachmentList.removeAllViews();
+                    if(!body.attachments.isEmpty()){
+                        TextView attachmentHeading=Ui.text(this,body.attachments.size()>1?"附件（"+body.attachments.size()+"）":"附件",14,Ui.MUTED);
+                        MailIcon attachmentIcon=new MailIcon(MailIcon.ATTACH,Ui.MUTED);attachmentIcon.setBounds(0,0,Ui.dp(this,16),Ui.dp(this,16));
+                        attachmentHeading.setCompoundDrawablesRelative(attachmentIcon,null,null,null);attachmentHeading.setCompoundDrawablePadding(Ui.dp(this,6));attachmentList.addView(attachmentHeading);
+                        for(MailClient.Attachment file:body.attachments){
+                            Button attachment=Ui.button(this,file.name,()->saveAttachment(file));attachment.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);attachment.setSingleLine(false);
+                            attachmentList.addView(attachment,new LinearLayout.LayoutParams(-1,-2));
+                        }
+                        attachmentList.setVisibility(View.VISIBLE);
+                    }
                     imageUrls.clear();for(org.jsoup.nodes.Element image:org.jsoup.Jsoup.parse(body.html).select("img[src]"))imageUrls.add(image.attr("src"));
                     String warning=body.warning.isEmpty()?"":"<p style='background:#fff5dd;padding:12px;border-radius:12px'>"+org.jsoup.nodes.Entities.escape(body.warning)+"</p>";
-                    readerHtml[0]="<!doctype html><meta name='viewport' content='width=device-width'><style>body{font-family:sans-serif;font-size:15px;margin:0;padding:16px;color:#253247;line-height:1.6;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}pre{white-space:pre-wrap}</style>"+warning+body.html;
+                    readerHtml[0]="<!doctype html><meta name='viewport' content='width=device-width'><style>html{-webkit-text-size-adjust:100%;text-size-adjust:100%}body{font-family:sans-serif;font-size:14px;margin:0;padding:16px;color:#253247;line-height:1.6;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}pre{white-space:pre-wrap}</style>"+warning+body.html;
                     web.loadDataWithBaseURL(MailImages.ORIGIN,readerHtml[0],"text/html","UTF-8",null);
                 });
                 if(!item.optBoolean("seen"))try{mail.apply(List.of(item),"read",null);}catch(Exception ignored){}
@@ -366,9 +396,10 @@ public class MainActivity extends Activity {
     private void readerMenu(){AlertDialog menu=Ui.dialog(this).setItems(new String[]{"标为未读","加星标","取消星标","移动到…","归档","标为垃圾邮件","移到废纸篓","永久删除","保存附件"},(d,index)->{if(index==8){attachments();return;}if(index==7){Ui.dialog(this).setTitle("永久删除这封邮件？").setMessage("此操作不能撤销。").setNegativeButton("取消",null).setPositiveButton("删除",(x,w)->readerAction("delete",null)).show();return;}if(index==6){confirmTrash(List.of(readerItem));return;}if(index==3){try{folders(mail.accounts.account(readerItem.getString("acc")),path->readerAction("move",path));}catch(Exception e){Ui.toast(this,MailClient.error(e));}return;}readerAction(new String[]{"unread","star","unstar","","archive","junk"}[index],null);}).create();showCompactMenu(menu);}
     private void showCompactMenu(AlertDialog menu){menu.show();int width=getWindow().getDecorView().getWidth();if(width==0)width=getResources().getDisplayMetrics().widthPixels;menu.getWindow().setLayout(Math.min(Ui.dp(this,240),Math.max(1,width-Ui.dp(this,48))),WindowManager.LayoutParams.WRAP_CONTENT);}
     private void readerAction(String action,String target){background(()->mail.apply(List.of(readerItem),action,target),()->{if(Set.of("move","archive","junk","delete").contains(action))buildList();Ui.toast(this,"操作已完成");});}
-    private void attachments(){if(decoded==null||decoded.attachments.isEmpty()){Ui.toast(this,"此邮件没有可保存的附件");return;}String[] names=new String[decoded.attachments.size()];for(int i=0;i<names.length;i++)names[i]=decoded.attachments.get(i).name;Ui.dialog(this).setTitle("保存附件").setItems(names,(d,index)->{MailClient.Attachment file=decoded.attachments.get(index);pendingAttachment=file.key;startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(file.type.split(";")[0]).putExtra(Intent.EXTRA_TITLE,file.name),44);}).show();}
+    private void attachments(){if(decoded==null||decoded.attachments.isEmpty()){Ui.toast(this,"此邮件没有可保存的附件");return;}String[] names=new String[decoded.attachments.size()];for(int i=0;i<names.length;i++)names[i]=decoded.attachments.get(i).name;Ui.dialog(this).setTitle("保存附件").setItems(names,(d,index)->saveAttachment(decoded.attachments.get(index))).show();}
+    private void saveAttachment(MailClient.Attachment file){pendingAttachment=file.key;startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(file.type.split(";")[0]).putExtra(Intent.EXTRA_TITLE,file.name),44);}
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==44&&result==RESULT_OK&&data!=null){JSONObject item=readerItem;String key=pendingAttachment;background(()->mail.saveAttachment(item,key,data.getData()),()->Ui.toast(this,"附件已保存"));}}
-    private void startImport(){try{if(importer!=null)importer.stop();importer=new ImportServer(mail.accounts,(records,approval)->runOnUiThread(()->{List<String> names=new ArrayList<>();for(int i=0;i<records.length();i++)names.add(records.optJSONObject(i).optString("alias")+" · "+records.optJSONObject(i).optString("email"));Ui.dialog(this).setTitle("导入 "+records.length()+" 个邮箱配置？").setMessage(String.join("\n",names)+"\n\n不包含密码，现有密码会保留。").setNegativeButton("取消",(d,w)->approval.complete(false)).setPositiveButton("导入",(d,w)->{approval.complete(true);handler.postDelayed(()->{if(!navigationPage.isEmpty()){drawer();}else render();Ui.toast(this,"配置已导入，请填写授权码");},500);}).setOnCancelListener(d->approval.complete(false)).show();}));importer.start();Ui.toast(this,"已开启电脑配置导入，等待 USB 连接；两分钟后自动关闭");}catch(Exception e){Ui.toast(this,MailClient.error(e));}}
+    private void startImport(){try{if(importer!=null)importer.stop();importer=new ImportServer(mail.accounts,(records,approval)->runOnUiThread(()->{List<String> names=new ArrayList<>();for(int i=0;i<records.length();i++)names.add(records.optJSONObject(i).optString("alias")+" · "+records.optJSONObject(i).optString("email"));Ui.dialog(this).setTitle("导入 "+records.length()+" 个邮箱配置？").setMessage(String.join("\n",names)+"\n\n不包含密码，现有密码会保留。").setNegativeButton("取消",(d,w)->approval.complete(false)).setPositiveButton("导入",(d,w)->{approval.complete(true);handler.postDelayed(()->{if(navigationPage.equals("mailboxes")){drawer();}else render();Ui.toast(this,"配置已导入，请填写授权码");},500);}).setOnCancelListener(d->approval.complete(false)).show();}));importer.start();Ui.toast(this,"已开启电脑配置导入，等待 USB 连接；两分钟后自动关闭");}catch(Exception e){Ui.toast(this,MailClient.error(e));}}
     private void editAccount(JSONObject old){try{
         JSONObject record=old==null?new JSONObject():new JSONObject(old.toString());LinearLayout fields=Ui.column(this);Ui.pad(fields,16);ScrollView scroll=new ScrollView(this);scroll.addView(fields);
         Spinner provider=new Spinner(this);String[] providers={"Gmail","163","QQ","XYNU","自定义"};provider.setAdapter(Ui.choices(this,Arrays.asList(providers)));fields.addView(provider);
@@ -405,6 +436,14 @@ public class MainActivity extends Activity {
             }catch(Exception ignored){}
             LinearLayout text=Ui.column(MainActivity.this);LinearLayout first=Ui.row(MainActivity.this);TextView from=Ui.text(MainActivity.this,(m.optBoolean("seen")||drafts?"":"•  ")+(drafts?"收件人："+(m.optString("to").isEmpty()?"（未填写）":m.optString("to")):MailClient.clean(m.optString("from"))),15,Ui.TEXT);from.setSingleLine(true);from.setEllipsize(android.text.TextUtils.TruncateAt.END);if(!m.optBoolean("seen")&&!drafts)from.setTypeface(null,android.graphics.Typeface.BOLD);first.addView(from,new LinearLayout.LayoutParams(0,-2,1));TextView date=Ui.text(MainActivity.this,new SimpleDateFormat("MM-dd HH:mm",Locale.getDefault()).format(new Date(m.optLong("date",m.optLong("updated",System.currentTimeMillis())))),11,Ui.MUTED);first.addView(date);text.addView(first);
             TextView subject=Ui.text(MainActivity.this,(m.optBoolean("starred")?"★ ":"")+(m.optString("subject").isEmpty()?"（无主题）":m.optString("subject")),15,Ui.TEXT);subject.setSingleLine(true);subject.setEllipsize(android.text.TextUtils.TruncateAt.END);if(!m.optBoolean("seen")&&!drafts)subject.setTypeface(null,android.graphics.Typeface.BOLD);LinearLayout.LayoutParams subjectParams=new LinearLayout.LayoutParams(-1,-2);subjectParams.topMargin=Ui.dp(MainActivity.this,5);text.addView(subject,subjectParams);
-            LinearLayout last=Ui.row(MainActivity.this);TextView preview=Ui.text(MainActivity.this,drafts?m.optString("body"):m.optString("preview"),14,Ui.MUTED);preview.setSingleLine(true);preview.setEllipsize(android.text.TextUtils.TruncateAt.END);last.addView(preview,new LinearLayout.LayoutParams(0,-2,1));try{JSONObject account=mail.accounts.account(m.optString("acc"));TextView tag=Ui.text(MainActivity.this,drafts?"本地草稿":AccountStore.alias(account).replace(" 邮箱",""),11,AccountStore.color(account));tag.setPadding(Ui.dp(MainActivity.this,7),Ui.dp(MainActivity.this,3),Ui.dp(MainActivity.this,7),Ui.dp(MainActivity.this,3));tag.setBackground(Ui.rounded((AccountStore.color(account)&0xFFFFFF)|0x18000000,6,MainActivity.this));last.addView(tag);}catch(Exception ignored){}LinearLayout.LayoutParams lastParams=new LinearLayout.LayoutParams(-1,-2);lastParams.topMargin=Ui.dp(MainActivity.this,6);text.addView(last,lastParams);row.addView(text,new LinearLayout.LayoutParams(0,-2,1));return row;}
+            LinearLayout last=Ui.row(MainActivity.this);TextView preview=Ui.text(MainActivity.this,drafts?m.optString("body"):m.optString("preview"),14,Ui.MUTED);preview.setSingleLine(true);preview.setEllipsize(android.text.TextUtils.TruncateAt.END);last.addView(preview,new LinearLayout.LayoutParams(0,-2,1));
+            try{
+                JSONObject account=mail.accounts.account(m.optString("acc"));TextView tag=Ui.text(MainActivity.this,drafts?"本地草稿":AccountStore.alias(account).replace(" 邮箱",""),11,AccountStore.color(account));
+                tag.setSingleLine(true);tag.setEllipsize(android.text.TextUtils.TruncateAt.END);tag.setGravity(Gravity.CENTER);
+                tag.setPadding(Ui.dp(MainActivity.this,7),Ui.dp(MainActivity.this,3),Ui.dp(MainActivity.this,7),Ui.dp(MainActivity.this,3));
+                tag.setBackground(Ui.rounded((AccountStore.color(account)&0xFFFFFF)|0x18000000,6,MainActivity.this));
+                last.addView(tag,new LinearLayout.LayoutParams(Ui.dp(MainActivity.this,56),-2));
+            }catch(Exception ignored){}
+            LinearLayout.LayoutParams lastParams=new LinearLayout.LayoutParams(-1,-2);lastParams.topMargin=Ui.dp(MainActivity.this,6);text.addView(last,lastParams);row.addView(text,new LinearLayout.LayoutParams(0,-2,1));return row;}
     }
 }

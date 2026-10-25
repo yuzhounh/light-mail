@@ -36,7 +36,7 @@ final class MailClient {
     private static final long FULL_RECONCILE_INTERVAL=6*60*60*1000L;
     private final ConcurrentHashMap<String,Long> lastFullReconcile=new ConcurrentHashMap<>();
     static synchronized MailClient get(Context c){if(instance==null)instance=new MailClient(c.getApplicationContext());return instance;}
-    MailClient(Context c){context=c;accounts=new AccountStore(c);cache=new MailCache(c);}
+    MailClient(Context c){context=c;accounts=new AccountStore(c,id->IO.execute(()->accountChanged(id)));cache=new MailCache(c);}
     void changed(){context.sendBroadcast(new android.content.Intent(CHANGED).setPackage(context.getPackageName()));}
     static String error(Throwable e){
         for(Throwable cause=e;cause!=null;cause=cause.getCause()){
@@ -74,22 +74,51 @@ final class MailClient {
         try{store.id(Map.of("name","Light Mail","version",BuildConfig.VERSION_NAME));}catch(MessagingException ignored){}
         return store;
     }
-    /** One reusable IMAP connection per account for syncs and actions, instead of a TLS handshake and login each time. */
-    private static final class Shared {final IMAPStore store;final String fingerprint;Shared(IMAPStore s,String f){store=s;fingerprint=f;}}
+    /** Reuse JavaMail's per-account Store/connection pool; IDLE retains its dedicated connection. */
+    private static final class Shared {final IMAPStore store;final String fingerprint;int users;boolean retired,closed;Shared(IMAPStore s,String f){store=s;fingerprint=f;}}
     private final ConcurrentHashMap<String,Shared> shared=new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String,Object> sharedLocks=new ConcurrentHashMap<>();
-    IMAPStore shared(JSONObject a) throws Exception {
-        String id=a.getString("id"),fingerprint=Integer.toHexString(Objects.hash(a.getJSONObject("imap").toString(),a.optString("user",a.getString("email")),accounts.password(a)));
+    private final ConcurrentHashMap<IMAPStore,Shared> borrowed=new ConcurrentHashMap<>();
+    private static String connectionSettings(JSONObject a) throws Exception {
+        JSONObject server=a.getJSONObject("imap");
+        return new JSONArray().put(server.optString("host")).put(server.optInt("port")).put(server.optBoolean("secure",true))
+            .put(a.optString("user",a.getString("email"))).put(a.optString("secret")).toString();
+    }
+    private static void closeStore(IMAPStore store){try{store.close();}catch(MessagingException ignored){}}
+    private void retire(Shared current){
+        if(current==null)return;boolean close;
+        synchronized(current){current.retired=true;close=current.users==0&&!current.closed;if(close)current.closed=true;}
+        if(close){borrowed.remove(current.store,current);IO.execute(()->closeStore(current.store));}
+    }
+    private void accountChanged(String id){
         synchronized(sharedLocks.computeIfAbsent(id,k->new Object())){
-            // isConnected() sends a NOOP, so a connection the server dropped, or changed account settings, get a new one.
-            Shared current=shared.get(id);if(current!=null&&current.fingerprint.equals(fingerprint)&&current.store.isConnected())return current.store;
-            IMAPStore store=connect(a);shared.put(id,new Shared(store,fingerprint));
-            if(current!=null)try{current.store.close();}catch(MessagingException ignored){}
-            return store;
+            Shared current=shared.get(id);if(current==null)return;
+            try{if(current.fingerprint.equals(connectionSettings(accounts.account(id))))return;}catch(Exception ignored){}
+            shared.remove(id,current);retire(current);
         }
     }
-    /** Keeps the shared connection open; only a connection already replaced by a newer one is closed. */
-    void release(IMAPStore store){for(Shared s:shared.values())if(s.store==store)return;try{store.close();}catch(MessagingException ignored){}}
+    IMAPStore shared(JSONObject a) throws Exception {
+        String id=a.getString("id");
+        synchronized(sharedLocks.computeIfAbsent(id,k->new Object())){
+            // Read current configuration, never a queued task's stale account snapshot.
+            JSONObject account=accounts.account(id);String fingerprint=connectionSettings(account);
+            Shared current=shared.get(id);
+            if(current==null||!current.fingerprint.equals(fingerprint)||!current.store.isConnected()){
+                if(current!=null){shared.remove(id,current);retire(current);}
+                IMAPStore store=connect(account);
+                try{if(!fingerprint.equals(connectionSettings(accounts.account(id))))throw new Exception("邮箱配置已更新，请重试");}
+                catch(Exception changed){closeStore(store);throw changed;}
+                current=new Shared(store,fingerprint);shared.put(id,current);borrowed.put(store,current);
+            }
+            synchronized(current){current.users++;}return current.store;
+        }
+    }
+    /** Retired pools close after the last in-flight operation, without interrupting its folder. */
+    void release(IMAPStore store){
+        Shared current=borrowed.get(store);if(current==null){closeStore(store);return;}boolean close;
+        synchronized(current){if(current.users>0)current.users--;close=current.retired&&current.users==0&&!current.closed;if(close)current.closed=true;}
+        if(close){borrowed.remove(store,current);closeStore(store);}
+    }
     void test(JSONObject a) throws Exception {
         IMAPStore store=connect(a);store.close();testSmtp(a);
     }
