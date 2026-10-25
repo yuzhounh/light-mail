@@ -2,9 +2,9 @@
 
 ## 当前源码：0.2.5 / code 22（2026-10-25）
 
-- 唯一日常APK交付路径：`dist/LightMail-0.2.5-code22.apk`。本轮构建、签名检查及手机覆盖安装待完成；先前手机已安装0.2.4/code21，不将源码版本视作安装证明。旧包保留。
+- 唯一日常APK交付路径：`dist/LightMail-0.2.5-code22.apk`。源码提交`fccb18f`，一次`assembleRelease lintRelease assembleDebug assembleDebugAndroidTest`构建成功，v2签名通过，包内版本实读0.2.5/code22；已复制交付包。正式手机覆盖安装由协调任务完成后补记；先前手机已安装0.2.4/code21。旧包保留。
 - 整合下述既有界面修订和IMAP连接池复用。账户移除或IMAP服务器、用户名、授权码变更时淘汰该账户的共享Store；正在使用的旧Store在最后一次操作释放后关闭，其他账户不受影响。排队任务读取当前账户，连接建立后再次检查账户及配置，拒绝使用已删除账户或过期配置。失效通知和空闲连接关闭在后台执行，避免界面等待网络关闭。
-- 复用的是JavaMail Store及其连接池，不承诺每账户只有一个TCP连接；IDLE保留独立连接。依据[JavaMail官方连接池说明](https://javaee.github.io/javamail/docs/api/com/sun/mail/imap/package-summary.html)。增加账户变更、移除、旧租约释放与其他账户不受影响的定向回归用例；执行结果在构建完成后补记。
+- 复用的是JavaMail Store及其连接池，不承诺每账户只有一个TCP连接；IDLE保留独立连接。依据[JavaMail官方连接池说明](https://javaee.github.io/javamail/docs/api/com/sun/mail/imap/package-summary.html)。`CoreTests#jSharedPoolsFollowAccountLifecycle`覆盖账户变更、移除、旧租约释放与其他账户不受影响，测试代码已编译；隔离调试包安装被手机以`INSTALL_FAILED_USER_RESTRICTED`拒绝，未运行该仪器测试，未绕过安装限制、清理正式应用或访问真实邮箱。另`npm run check`及补丁空白检查通过。
 - Windows源码版本同步为0.2.5，实际日常程序仍为0.2.4；本次不更新Windows运行时，不创建公开GitHub Release。
 
 ## 历史日常增量：0.2.4 / code 21（2026-10-25，已安装）
