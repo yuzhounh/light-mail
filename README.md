@@ -9,7 +9,7 @@
 
 ## 下载与运行
 
-本地日常版为 **0.2.2**（Windows / Android code 18），公开 Release 仍为下列 0.1.5。日常完整包与 SHA-256 清单在 `dist/`；本批包含连接退避、缓存读取和手机后台列表查询优化，保留原有独立阅读窗口、未读计数同步、账户及邮件数据。
+当前源码 **0.2.5**，Android目标 **0.2.5/code22**，唯一日常APK交付路径为`dist/LightMail-0.2.5-code22.apk`；构建及覆盖安装完成状态见[Android说明](docs/android.md)。本次整合此前未提交的字号、附件、说明页面和滚动位置修订，并修复共享IMAP Store在账户移除或连接配置变更后的清理，保留正在执行的操作直至释放连接。Windows实际日常版保持 **0.2.4**，入口`runtime/LightMail/LightMail.exe`，本次不更新或重启Windows程序；公开Release仍为下列0.1.5。桌面此前已接受的字号、附件和表格换行源码一并保留，历史安装记录见[启动与更新记录](docs/startup-and-cache.md)。
 
 在 [Releases](https://github.com/yuzhounh/light-mail/releases/latest) 下载：
 

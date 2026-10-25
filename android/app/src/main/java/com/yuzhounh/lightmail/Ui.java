@@ -17,7 +17,7 @@ final class Ui {
     static GradientDrawable rounded(int color,int radius,Context c){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(c,radius));return d;}
     static LinearLayout column(Context c){LinearLayout v=new LinearLayout(c);v.setOrientation(LinearLayout.VERTICAL);return v;}
     static LinearLayout row(Context c){LinearLayout v=new LinearLayout(c);v.setOrientation(LinearLayout.HORIZONTAL);v.setGravity(android.view.Gravity.CENTER_VERTICAL);return v;}
-    static TextView text(Context c,String value,int size,int color){TextView v=new TextView(c);v.setText(value);v.setTextSize(Math.max(10,size-1));v.setTextColor(color);v.setIncludeFontPadding(false);v.setLineSpacing(dp(c,2),1);return v;}
+    static TextView text(Context c,String value,int size,int color){TextView v=new TextView(c);v.setText(value);v.setTextSize(size);v.setTextColor(color);v.setIncludeFontPadding(false);v.setLineSpacing(dp(c,2),1);return v;}
     static TextView title(Context c,String value){TextView t=text(c,value,20,TEXT);t.setTypeface(null,Typeface.BOLD);return t;}
     static void pad(View v,int n){int d=dp(v.getContext(),n);v.setPadding(d,d,d,d);}
     static android.graphics.drawable.RippleDrawable touch(Context c,int color,int radius){return new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x22416DC3),rounded(color,radius,c),rounded(Color.WHITE,radius,c));}

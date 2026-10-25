@@ -85,4 +85,24 @@ public class CoreTests {
     @Test public void dSendFailurePreservesDraft() throws Exception {
         MailClient mail=MailClient.get(context);String id="failure-"+UUID.randomUUID(),draftId="failure-draft";try{mail.accounts.save(account(id,1,1),"fixture");JSONObject draft=new JSONObject().put("id",draftId).put("acc",id).put("to","receiver@example.test").put("subject","No send").put("body","Keep draft").put("attachments",new JSONArray());mail.cache.saveDraft(draft);try{mail.send(draft);fail("Closed local port unexpectedly accepted mail");}catch(javax.mail.MessagingException expected){}assertNotNull(mail.cache.draft(draftId));}finally{mail.accounts.remove(id);mail.cache.deleteDraft(draftId);}
     }
+    @Test public void jSharedPoolsFollowAccountLifecycle() throws Exception {
+        MailClient mail=MailClient.get(context);String id="pool-"+UUID.randomUUID(),otherId="other-"+UUID.randomUUID();
+        com.sun.mail.imap.IMAPStore first=null,replacement=null,other=null;
+        try(TestMailbox server=new TestMailbox(InstrumentationRegistry.getInstrumentation().getContext())){
+            MailClient.localTestSockets=server.clientFactory;
+            for(String key:List.of(id,otherId)){JSONObject a=account(key,server.imap.getLocalPort(),server.smtp.getLocalPort());a.getJSONObject("imap").put("host","localhost");mail.accounts.save(a,"fixture");}
+            JSONObject stale=mail.accounts.account(id);first=mail.shared(stale);mail.release(first);
+            assertSame(first,mail.shared(stale)); // Held lease must survive a configuration update.
+            other=mail.shared(mail.accounts.account(otherId));mail.release(other);
+            JSONObject changed=new JSONObject(stale.toString()).put("user","updated@example.test");mail.accounts.save(changed,null);
+            replacement=mail.shared(stale);assertNotSame(first,replacement);assertTrue(first.isConnected());
+            mail.release(first);assertFalse(first.isConnected());first=null;
+            com.sun.mail.imap.IMAPStore sameOther=mail.shared(mail.accounts.account(otherId));assertSame(other,sameOther);mail.release(sameOther);
+            mail.accounts.remove(id);
+            try{mail.shared(stale);fail("Removed account recreated a shared pool");}catch(Exception expected){assertEquals("邮箱不存在",expected.getMessage());}
+            assertTrue(replacement.isConnected());mail.release(replacement);
+            for(int i=0;i<40&&replacement.isConnected();i++)Thread.sleep(25);
+            assertFalse("Removed pool must close after its last lease",replacement.isConnected());replacement=null;
+        }finally{if(first!=null)mail.release(first);if(replacement!=null)mail.release(replacement);mail.accounts.remove(id);mail.accounts.remove(otherId);MailClient.localTestSockets=null;}
+    }
 }

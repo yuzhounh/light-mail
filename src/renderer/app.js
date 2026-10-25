@@ -561,7 +561,7 @@ function renderReader() {
         <div class="when">${fmtDate(m.date, true)}</div>
       </div>
       <div class="body-wrap"><iframe id="body-frame" scrolling="no" sandbox="allow-same-origin"></iframe></div>
-      ${m.attachments.length ? `<div class="atts">${m.attachments.map((a) => `<div class="att" data-att="${a.id}" style="cursor:pointer">${ic('clip', 15)}<span>${esc(a.filename)}</span><small>${fmtSize(a.size)}</small></div>`).join('')}</div>` : ''}
+      ${m.attachments.length ? `<div class="atts" role="group" aria-labelledby="attachment-heading"><div class="att-heading" id="attachment-heading">${ic('clip', 16)}<span>附件${m.attachments.length > 1 ? `（${m.attachments.length}）` : ''}</span></div>${m.attachments.map((a) => `<div class="att" data-att="${a.id}" style="cursor:pointer"><span>${esc(a.filename)}</span><small>${fmtSize(a.size)}</small></div>`).join('')}</div>` : ''}
     </div>
   </div>`;
   fillFrame(m, true);
@@ -578,7 +578,7 @@ function fillFrame(m, allowImages) {
   const doc = `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${img}; style-src 'unsafe-inline'; font-src ${allowImages ? 'https:' : "'none'"}">
 <base target="_blank">
-<style>html,body{margin:0;overflow:hidden}body{font:14px/1.65 "Segoe UI","Microsoft YaHei UI",sans-serif;color:#222;background:#fff;word-break:break-word;overflow-wrap:anywhere}#mail-content{display:flow-root;box-sizing:border-box;padding:18px 22px}img{max-width:100%;height:auto}table{max-width:100%}pre{white-space:pre-wrap}a{color:#2563c9}blockquote{margin:8px 0;padding-left:12px;border-left:3px solid #ddd;color:#555}</style>
+<style>html,body{margin:0;overflow:hidden}body{font:14px/1.65 "Segoe UI","Microsoft YaHei UI",sans-serif;color:#222;background:#fff;word-break:normal;overflow-wrap:break-word}#mail-content{display:flow-root;box-sizing:border-box;padding:18px 22px}img{max-width:100%;height:auto}table{max-width:100%;overflow-wrap:normal}pre{white-space:pre-wrap;overflow-wrap:break-word}a{color:#2563c9;overflow-wrap:break-word}blockquote{margin:8px 0;padding-left:12px;border-left:3px solid #ddd;color:#555}</style>
 </head><body><div id="mail-content">${m.html}</div></body></html>`;
   let observer;
   let frame;
