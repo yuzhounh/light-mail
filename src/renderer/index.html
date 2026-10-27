@@ -10,11 +10,9 @@
   <header id="titlebar"><span>Light Mail</span></header>
   <div id="app">
     <aside id="sidebar">
-      <div class="acct-head" id="acct-head"></div>
+      <div class="acct-head nav-scope" id="acct-head" role="button" tabindex="0" title="查看全部邮件"></div>
       <div class="side-actions">
         <button class="side-btn primary" id="btn-compose"></button>
-        <button class="side-btn" id="btn-search"></button>
-        <button class="side-btn" id="btn-settings"></button>
       </div>
       <nav id="nav"></nav>
     </aside>
@@ -31,8 +29,8 @@
           <button class="icon-btn" id="btn-refresh" title="刷新"></button>
         </div>
       </header>
-      <div class="search-row" id="search-row" hidden>
-        <input id="search-input" type="search" placeholder="搜索主题、发件人、收件人（回车）" />
+      <div class="search-row" id="search-row">
+        <input id="search-input" type="search" placeholder="搜索当前文件夹" aria-label="搜索当前文件夹" title="搜索主题、发件人、收件人；回车搜索，Esc 清除；Ctrl+F 聚焦" />
       </div>
       <div class="selection-bar" id="selection-bar" hidden></div>
       <div id="list" tabindex="-1"></div>

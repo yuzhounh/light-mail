@@ -21,7 +21,8 @@ const ICONS = {
   archive: '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>',
   pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   search: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
-  settings: '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+  // Feather settings icon (MIT); see feather-LICENSE.txt.
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   left: '<polyline points="15 18 9 12 15 6"/>',
   right: '<polyline points="9 18 15 12 9 6"/>',
   up: '<path d="M12 20V4m-7 7 7-7 7 7"/>',
@@ -72,7 +73,7 @@ const brandSvg = (brand, size) => {
 const mailboxIcon = (email) => {
   const brand = mailboxBrand(email);
   if (brand) return `<div class="avatar mailbox-icon mailbox-brand" style="--mailbox-color:${brand.color}" aria-hidden="true">${brandSvg(brand, 22)}</div>`;
-  return `<div class="avatar mailbox-icon" style="--mailbox-color:${email ? mailboxColorOf(email) : '#3b7ddd'}" aria-hidden="true">${ic(email ? 'mail' : 'inboxStack', 22)}</div>`;
+  return `<div class="avatar mailbox-icon${email ? '' : ' mailbox-aggregate'}" style="--mailbox-color:${email ? mailboxColorOf(email) : '#8b5cf6'}" aria-hidden="true">${ic(email ? 'mail' : 'inboxStack', 22)}</div>`;
 };
 
 const personName = (p) => (p ? p.name || p.address : '未知发件人');
@@ -117,7 +118,7 @@ const S = {
   folders: {}, // accId -> folders[]
   status: {}, // accId -> online/offline/error/auth
   hidden: {}, // accId -> folder paths hidden from the sidebar
-  sel: { accId: null, path: 'INBOX' }, // accId=null 表示所有账户的收件箱
+  sel: { accId: null, path: 'INBOX' }, // null account = cross-account view; @all = every folder.
   messages: [],
   limit: 50,
   total: 0,
@@ -130,6 +131,7 @@ const S = {
   loading: false,
   refreshing: false,
   hasListCache: false,
+  canLoadMore: false,
   localDraft: null,
   selectedKeys: new Set(),
   anchorKey: null,
@@ -143,6 +145,46 @@ const accById = (id) => S.accounts.find((a) => a.id === id);
 const accountAlias = (a) => a.alias || ({ 'xynu.edu.cn': 'XYNU 邮箱', 'gmail.com': 'Gmail 邮箱', '163.com': '163 邮箱', 'qq.com': 'QQ 邮箱' }[a.email.split('@')[1]?.toLowerCase()] || a.email);
 const folderMeta = (accId, path) => (S.folders[accId] || []).find((f) => f.path === path);
 const isUnified = () => S.sel.accId === null;
+
+// ---------- 邮箱范围 ----------
+const COMMON_SCOPES = [
+  { path: 'INBOX', role: '\\Inbox', label: '收件箱', icon: 'inbox' },
+  { path: '@role:drafts', role: '\\Drafts', label: '草稿', icon: 'draft' },
+  { path: '@role:sent', role: '\\Sent', label: '已发送', icon: 'send' },
+  { path: '@role:junk', role: '\\Junk', label: '垃圾邮件', icon: 'alert' },
+  { path: '@role:trash', role: '\\Trash', label: '废纸篓', icon: 'trash' },
+];
+const isAggregateScope = () => isUnified() || S.sel.path === '@all';
+const scopeRole = () => isUnified() ? COMMON_SCOPES.find((f) => f.path === S.sel.path)?.role
+  : folderMeta(S.sel.accId, S.sel.path)?.specialUse;
+
+function scopeTargets(sel = S.sel) {
+  if (sel.path === '@local-drafts') return [];
+  if (sel.accId && sel.path !== '@all') return [{ ...sel }];
+  const role = COMMON_SCOPES.find((f) => f.path === sel.path)?.role;
+  return S.accounts.filter((a) => !sel.accId || a.id === sel.accId).flatMap((a) => {
+    const folders = S.folders[a.id] || [];
+    const selected = sel.path === '@all' ? folders : folders.filter((f) => f.specialUse === role);
+    if (!folders.length && (sel.path === '@all' || role === '\\Inbox')) return [{ accId: a.id, path: 'INBOX' }];
+    return selected.map((f) => ({ accId: a.id, path: f.path }));
+  });
+}
+
+function mergeScopeMessages(messages, aggregate = isAggregateScope()) {
+  const ordered = [...messages].sort((a, b) => new Date(b.date) - new Date(a.date)
+    || Number(folderMeta(a.accId, a.path)?.specialUse === '\\All') - Number(folderMeta(b.accId, b.path)?.specialUse === '\\All'));
+  const seen = new Set();
+  return ordered.filter((m) => {
+    // Server IDs are account-wide; UIDs are only meaningful inside a folder.
+    const identity = aggregate && m.emailId ? ['email', m.accId, m.emailId]
+      : aggregate && m.messageId ? ['message', m.accId, m.messageId, m.subject, m.date, m.from?.address]
+      : ['folder', m.accId, m.path, m.uid];
+    const key = JSON.stringify(identity);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 function trustedSenders() {
   try {
@@ -172,15 +214,18 @@ function renderNav() {
     return `<div class="nav-item ${active ? 'active' : ''}" data-acc="${esc(accId ?? '')}" data-path="${esc(path)}" style="padding-left:${10 + depth * 16}px">
       ${ic(icon, 17)}<span class="label">${esc(label)}</span>${localDraft ? '<span class="local-draft-badge">本地 1</span>' : ''}${cnt(count)}</div>`;
   };
-  let h = '<div class="nav-group">邮件</div>';
-  if (multi) h += item(null, 'INBOX', '所有收件箱', 'inboxStack', totalUnread());
+  let h = `<div class="nav-group nav-account nav-scope ${isUnified() && S.sel.path === '@all' ? 'active' : ''}" data-acc="" data-path="@all" role="button" tabindex="0"><span class="nav-logo" style="color:#8b5cf6">${ic('inboxStack', 17)}</span><div class="account-label"><div class="account-alias">全部邮箱</div></div></div>`;
+  for (const f of COMMON_SCOPES) {
+    const count = S.accounts.reduce((n, a) => n + (S.folders[a.id] || []).filter((x) => x.specialUse === f.role).reduce((n, x) => n + (x.unseen || 0), 0), 0);
+    h += item(null, f.path, f.label, f.icon, count);
+  }
   for (const a of S.accounts) {
     const folders = S.folders[a.id] || [];
-    if (multi) {
+    {
       const failed = ['error', 'auth'].includes(S.status[a.id]) ? `<span class="sdot ${S.status[a.id]}" title="${S.status[a.id] === 'auth' ? '登录失败' : '连接出错'}"></span>` : '';
       const brand = mailboxBrand(a.email);
       const logo = brand ? `<span style="color:${brand.color};display:grid">${brandSvg(brand, 17)}</span>` : ic('mail', 15);
-      h += `<div class="nav-group nav-account" data-account="${esc(a.id)}" title="${esc(a.email)}"><span class="nav-logo">${logo}${failed}</span><div class="account-label"><div class="account-alias">${esc(accountAlias(a))}</div><div class="account-address">${esc(a.email)}</div></div>${gearButton(a)}</div>`;
+      h += `<div class="nav-group nav-account nav-scope ${S.sel.accId === a.id && S.sel.path === '@all' ? 'active' : ''}" data-account="${esc(a.id)}" data-acc="${esc(a.id)}" data-path="@all" role="button" tabindex="0" title="${esc(a.email)}"><span class="nav-logo">${logo}${failed}</span><div class="account-label"><div class="account-alias">${esc(accountAlias(a))}</div><div class="account-address">${esc(a.email)}</div></div>${gearButton(a)}</div>`;
     }
     const specials = folders.filter((f) => f.specialUse && !isHidden(a.id, f.path));
     const others = folders.filter((f) => !f.specialUse && !isHidden(a.id, f.path));
@@ -207,13 +252,16 @@ function renderHead() {
     $('acct-head').innerHTML = `${mailboxIcon()}<div class="meta"><div class="name">Light Mail</div><div class="mail">${label}</div></div>`;
   } else if (a || S.accounts.length === 1) {
     const x = a || first;
-    $('acct-head').innerHTML = `${mailboxIcon(x.email)}${gearButton(x)}<div class="meta"><div class="name" title="${esc(accountAlias(x))}">${esc(accountAlias(x))}</div><div class="mail" title="${esc(x.email)}">${esc(x.email)}</div></div>`;
+    $('acct-head').innerHTML = `${mailboxIcon(x.email)}<div class="meta"><div class="name" title="${esc(accountAlias(x))}">${esc(accountAlias(x))}</div><div class="mail" title="${esc(x.email)}">${esc(x.email)}</div></div>`;
   } else {
-    $('acct-head').innerHTML = `${mailboxIcon()}<div class="meta"><div class="name">所有收件箱</div><div class="mail">${S.accounts.length} 个邮箱</div></div>`;
+    $('acct-head').innerHTML = `${mailboxIcon()}<div class="meta"><div class="name">全部邮箱</div><div class="mail">${S.accounts.length} 个邮箱</div></div>`;
   }
+  $('acct-head').insertAdjacentHTML('beforeend', `<button class="acct-gear" data-app-settings title="设置" aria-label="设置">${ic('settings', 22)}</button>`);
   $('btn-compose').innerHTML = `${ic('pen')}写邮件${S.localDraft ? '<span class="local-draft-badge compose-draft-badge">草稿 1</span>' : ''}`;
-  $('btn-search').innerHTML = `${ic('search')}搜索`;
-  $('btn-settings').innerHTML = `${ic('settings')}设置`;
+  const searchScope = S.sel.path === '@all' ? (isUnified() ? '搜索全部邮箱' : '搜索当前邮箱')
+    : isUnified() ? `搜索所有${COMMON_SCOPES.find((f) => f.path === S.sel.path)?.label || '收件箱'}` : '搜索当前文件夹';
+  $('search-input').placeholder = searchScope;
+  $('search-input').setAttribute('aria-label', searchScope);
   $('btn-unread').innerHTML = ic('filter');
   $('btn-refresh').innerHTML = ic('refresh');
 }
@@ -224,20 +272,22 @@ function renderSyncStatus() {
     status.textContent = status.title = S.accountsError ? '账户加载失败，正在自动重试…' : '正在读取本地账户…';
     return;
   }
-  const vals = S.accounts.map((a) => S.status[a.id]);
+  const vals = S.accounts.filter((a) => isUnified() || a.id === S.sel.accId).map((a) => S.status[a.id]);
   let t = '已同步';
   if (!S.accounts.length) t = '';
-  else if (S.loading || S.refreshing) t = '同步中…';
+  else if (S.loading || S.refreshing) t = S.search ? '搜索中…' : '同步中…';
+  else if (S.errors.length) t = S.search ? '搜索未完成' : '同步未完成';
+  else if (S.search) t = '搜索完成';
   else if (vals.includes('auth')) t = '登录失败，请检查密码';
   else if (vals.includes('error')) t = '连接出错，重试中…';
   else if (vals.includes('offline') || vals.includes(undefined)) t = '连接中…';
-  else if (S.errors.length) t = '同步未完成';
   status.textContent = status.title = t;
 }
 
 // ---------- 列表 ----------
 function listTitle() {
-  if (isUnified()) return '所有收件箱';
+  if (S.sel.path === '@all') return isUnified() ? '全部邮箱' : `${accountAlias(accById(S.sel.accId))} · 全部邮件`;
+  if (isUnified()) return `所有${COMMON_SCOPES.find((f) => f.path === S.sel.path)?.label || '收件箱'}`;
   if (S.sel.path === '@local-drafts') return '草稿';
   return folderMeta(S.sel.accId, S.sel.path)?.label || (S.sel.path === 'INBOX' ? '收件箱' : S.sel.path);
 }
@@ -284,8 +334,8 @@ function renderList() {
   let h = '';
   for (const e of S.errors) h += `<div class="banner">${esc(e)}</div>`;
   const msgs = visibleMessages();
-  const draft = S.localDraft?.accId === S.sel.accId
-    && (S.sel.path === '@local-drafts' || folderMeta(S.sel.accId, S.sel.path)?.specialUse === '\\Drafts')
+  const draft = S.localDraft && (isUnified() || S.localDraft.accId === S.sel.accId)
+    && (S.sel.path === '@all' || S.sel.path === '@local-drafts' || scopeRole() === '\\Drafts')
     && (!S.search || [S.localDraft.subject, S.localDraft.to, S.localDraft.cc, S.localDraft.body].some((text) => (text || '').toLowerCase().includes(S.search.toLowerCase())))
     ? S.localDraft : null;
   if (draft) {
@@ -300,13 +350,14 @@ function renderList() {
   } else if (!msgs.length && !draft) {
     h += `<div class="empty">${S.loading && !S.hasListCache ? '加载中…' : S.unreadOnly ? '没有未读邮件' : '这里没有邮件'}</div>`;
   } else {
-    const sentView = ['\\Sent', '\\Drafts'].includes(folderMeta(S.sel.accId, S.sel.path)?.specialUse);
     for (const m of msgs) {
+      const sentView = ['\\Sent', '\\Drafts'].includes(folderMeta(m.accId, m.path)?.specialUse);
       const who = sentView ? (m.to[0] ? '收件人：' + personName(m.to[0]) : '（无收件人）') : personName(m.from);
       const domain = m.accEmail.split('@')[1]?.toLowerCase();
       const mailboxName = { 'xynu.edu.cn': 'XYNU', 'gmail.com': 'Gmail', '163.com': '163', 'qq.com': 'QQ' }[domain] || m.accEmail;
       const mailboxColor = mailboxColorOf(m.accEmail);
-      const tag = isUnified() && S.accounts.length > 1 ? `<span class="tag" style="--mailbox-color:${mailboxColor}" title="${esc(m.accEmail)}">${esc(mailboxName)}</span>` : '';
+      const sourceLabel = [isUnified() ? mailboxName : '', isAggregateScope() ? folderMeta(m.accId, m.path)?.label || m.path : ''].filter(Boolean).join(' · ');
+      const tag = sourceLabel ? `<span class="tag" style="--mailbox-color:${mailboxColor}" title="${esc(m.accEmail + ' / ' + m.path)}">${esc(sourceLabel)}</span>` : '';
       h += `<div class="row ${m.seen ? '' : 'unread'} ${S.selectedKeys.has(keyOf(m)) ? 'sel' : ''}" data-key="${esc(keyOf(m))}">
         <span class="dot"></span>
         <input type="checkbox" class="row-check" aria-label="选择 ${esc(m.subject)}" ${S.selectedKeys.has(keyOf(m)) ? 'checked' : ''}/>
@@ -315,7 +366,7 @@ function renderList() {
         <div class="r3"><span class="txt">${esc(m.preview)}</span>${tag}</div>
       </div>`;
     }
-    if (!S.loading && !S.search && S.messages.length >= S.limit) h += `<button class="more" data-act="more">加载更多</button>`;
+    if (!S.loading && S.canLoadMore) h += `<button class="more" data-act="more">加载更多</button>`;
   }
   list.innerHTML = h;
   list.scrollTop = keepScroll;
@@ -338,45 +389,52 @@ async function loadList() {
   S.loading = true;
   S.errors = [];
   renderSyncStatus();
-  const unified = isUnified();
   const limit = S.limit;
   const search = S.search;
-  const targets = unified
-    ? S.accounts.map((a) => ({ accId: a.id, path: 'INBOX' }))
-    : S.accounts.length
-      ? [{ ...S.sel }]
-      : [];
-  const per = unified ? Math.min(limit, 40 + (limit - 50)) : limit;
+  const sel = { ...S.sel };
+  const aggregate = isAggregateScope();
+  if (aggregate && sel.path !== 'INBOX') {
+    const missing = S.accounts.filter((a) => (!sel.accId || a.id === sel.accId) && !S.folders[a.id]);
+    if (missing.length) await refreshFolders(missing.map((a) => a.id));
+    if (token !== listToken) return;
+  }
+  const targets = scopeTargets(sel);
+  const per = limit;
+  const targetKey = (t) => JSON.stringify([t.accId, t.path]);
   const groups = new Map();
   const publish = () => {
     const all = [...groups.values()].flatMap((r) => r.messages);
-    all.sort((a, b) => new Date(b.date) - new Date(a.date));
-    S.messages = unified ? all.slice(0, limit) : all;
+    const merged = mergeScopeMessages(all, aggregate);
+    S.messages = merged.slice(0, limit);
+    S.canLoadMore = merged.length > limit || [...groups.values()].some((r) => r.messages.length >= per);
     S.hasListCache = all.length > 0 || groups.size === targets.length;
-    if (!unified && targets.length && groups.has(targets[0].accId)) S.total = groups.get(targets[0].accId).total;
+    S.total = [...groups.values()].reduce((n, r) => n + (r.total || 0), 0);
     renderList();
   };
   // 缓存读取只访问本机磁盘，不等待 IMAP 连接和远程请求。
   await Promise.all(targets.map(async (t) => {
     const cached = await call('messages:cached', t.accId, t.path, { limit: per, search }).catch(() => null);
-    if (token === listToken && cached) groups.set(t.accId, cached);
+    if (token === listToken && cached) groups.set(targetKey(t), cached);
   }));
   if (token !== listToken) return;
   publish();
-  await Promise.allSettled(
-    targets.map(async (t) => {
+  // One serial stream per account avoids queuing many mailbox locks. Other
+  // accounts still load independently; obsolete views stop before the next folder.
+  await Promise.allSettled(S.accounts.map(async (account) => {
+    for (const t of targets.filter((t) => t.accId === account.id)) {
+      if (token !== listToken) return;
       try {
         const result = await call('messages:list', t.accId, t.path, { limit: per, search });
         if (token !== listToken) return;
-        groups.set(t.accId, result);
+        groups.set(targetKey(t), result);
       } catch (err) {
         if (token !== listToken) return;
         const acc = accById(t.accId);
-        S.errors.push(`${acc?.email || ''}：${err.message}`);
+        S.errors.push(`${acc?.email || ''} / ${folderMeta(t.accId, t.path)?.label || t.path}：${err.message}`);
       }
       if (token === listToken) publish();
-    })
-  );
+    }
+  }));
   if (token !== listToken) return;
   S.loading = false;
   S.selectedKeys = new Set([...(S.selectedKeys || [])].filter((key) => S.messages.some((m) => keyOf(m) === key)));
@@ -1076,7 +1134,7 @@ function openAccountDialog(existing = null) {
 }
 
 const isHidden = (accId, path) => path.toUpperCase() !== 'INBOX' && (S.hidden[accId] || []).includes(path);
-const gearButton = (a) => `<button class="acct-gear" data-gear="${esc(a.id)}" title="邮箱设置" aria-label="${esc(accountAlias(a))} 的设置">${ic('settings', 15)}</button>`;
+const gearButton = (a) => `<button class="acct-gear" data-gear="${esc(a.id)}" title="${esc(accountAlias(a))}设置" aria-label="${esc(accountAlias(a))}设置">${ic('settings', 17)}</button>`;
 
 async function saveHidden(accId, paths) {
   const next = { ...S.hidden, [accId]: [...new Set(paths)] };
@@ -1240,7 +1298,6 @@ async function loadAccounts() {
   }
   try {
   if (S.sel.accId && !accById(S.sel.accId)) S.sel = { accId: null, path: 'INBOX' };
-  if (S.accounts.length === 1) S.sel = { accId: S.accounts[0].id, path: S.sel.path };
   S.loading = S.accounts.length > 0;
   renderHead(); renderNav(); renderList(); renderSyncStatus();
   // Account display and cached mail do not depend on optional startup settings/draft.
@@ -1269,7 +1326,6 @@ async function loadAccounts() {
     return;
   }
   if (S.sel.accId && !accById(S.sel.accId)) S.sel = { accId: null, path: 'INBOX' };
-  if (S.accounts.length === 1) S.sel = { accId: S.accounts[0].id, path: S.sel.path };
   renderHead();
   renderNav();
   renderReader();
@@ -1286,12 +1342,25 @@ if (IS_COMPOSE_WINDOW) {
 $('nav').addEventListener('click', (e) => {
   const gear = e.target.closest('[data-gear]');
   if (gear) return guard(() => showAccountMenu(gear.dataset.gear));
-  const it = e.target.closest('.nav-item');
+  const it = e.target.closest('.nav-item, .nav-scope');
   if (it) select(it.dataset.acc || null, it.dataset.path);
 });
+$('nav').addEventListener('keydown', (e) => {
+  if (e.target.closest('[data-gear]')) { e.stopPropagation(); return; }
+  const it = e.target.closest('.nav-scope');
+  if (it && !e.target.closest('[data-gear]') && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault(); e.stopPropagation(); select(it.dataset.acc || null, it.dataset.path);
+  }
+});
 $('acct-head').addEventListener('click', (e) => {
-  const gear = e.target.closest('[data-gear]');
-  if (gear) guard(() => showAccountMenu(gear.dataset.gear));
+  if (e.target.closest('[data-app-settings]')) return openSettings();
+  select(S.sel.accId, '@all');
+});
+$('acct-head').addEventListener('keydown', (e) => {
+  if (e.target.closest('[data-app-settings]')) { e.stopPropagation(); return; }
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault(); e.stopPropagation(); select(S.sel.accId, '@all');
+  }
 });
 $('nav').addEventListener('contextmenu', (event) => guard(() => showFolderMenu(event)));
 $('list').addEventListener('contextmenu', (event) => guard(() => showMessageMenu(event)));
@@ -1376,7 +1445,6 @@ function fillFrameNow(allow) {
 }
 
 $('btn-compose').onclick = () => openCompose();
-$('btn-settings').onclick = openSettings;
 $('btn-refresh').onclick = async () => {
   if (S.refreshing) return;
   const button = $('btn-refresh');
@@ -1387,7 +1455,8 @@ $('btn-refresh').onclick = async () => {
   button.setAttribute('aria-busy', 'true');
   renderSyncStatus();
   try {
-    await Promise.all([guard(refreshFolders), guard(loadList)]);
+    await guard(refreshFolders);
+    await guard(loadList);
   } finally {
     S.refreshing = false;
     button.disabled = false;
@@ -1402,31 +1471,38 @@ $('btn-unread').onclick = () => {
   S.unreadOnly = !S.unreadOnly;
   renderList();
 };
-$('btn-search').onclick = () => {
-  const row = $('search-row');
-  row.hidden = !row.hidden;
-  if (!row.hidden) $('search-input').focus();
-  else if (S.search) {
+$('search-input').addEventListener('input', (e) => {
+  if (!e.target.value && S.search) {
     S.search = '';
-    $('search-input').value = '';
+    S.limit = 50;
     loadList();
   }
-};
+});
 $('search-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
+    e.preventDefault();
     S.search = e.target.value.trim();
     S.limit = 50;
     loadList();
   }
   if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation();
     e.target.value = '';
     S.search = '';
-    $('search-row').hidden = true;
+    S.limit = 50;
     loadList();
   }
 });
 
 document.addEventListener('keydown', (e) => {
+  if (!IS_COMPOSE_WINDOW && !IS_READER_WINDOW && !$('modal-root').innerHTML
+    && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
+    e.preventDefault();
+    $('search-input').focus();
+    $('search-input').select();
+    return;
+  }
   if (document.activeElement?.matches('input:not([type="checkbox"]),textarea,select,[contenteditable="true"]') || $('modal-root').innerHTML) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
     if (IS_READER_WINDOW) return;
@@ -1505,8 +1581,10 @@ window.api.on('acct:status', ({ accId, status }) => {
 });
 window.api.on('mail:open', async ({ accId, path, uid }) => {
   if (IS_READER_WINDOW) return;
-  if (!isUnified()) S.sel = { accId, path };
+  if (!isUnified() || S.sel.path !== 'INBOX') S.sel = { accId, path };
   S.search = '';
+  $('search-input').value = '';
+  renderHead(); renderNav();
   if (uid) {
     const cached = await call('message:cached', accId, path, uid).catch(() => null);
     if (cached) {
@@ -1530,13 +1608,13 @@ window.api.on('draft:changed', async () => {
   const draft = await guard(() => call('draft:get'));
   if (draft === undefined) return;
   updateLocalDraft(draft);
-  if (S.sel.path === '@local-drafts' || folderMeta(S.sel.accId, S.sel.path)?.specialUse === '\\Drafts') renderList();
+  if (S.sel.path === '@all' || S.sel.path === '@local-drafts' || scopeRole() === '\\Drafts') renderList();
 });
 
 // 兜底：每 3 分钟刷新一次（IDLE 掉线时也不会落下）
-setInterval(() => {
+setInterval(async () => {
   if (IS_READER_WINDOW || document.hidden) return;
-  refreshFolders();
+  await refreshFolders();
   if (!S.search) loadList();
 }, 180000);
 

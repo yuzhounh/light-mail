@@ -163,6 +163,8 @@ function toItem(acc, path, m, preview = '') {
     accEmail: acc.email,
     path,
     uid: m.uid,
+    emailId: m.emailId ? String(m.emailId) : null,
+    messageId: env.messageId || null,
     subject: env.subject || '(无主题)',
     from: addr(env.from?.[0]),
     to: (env.to || []).map(addr),
@@ -225,7 +227,13 @@ async function listMessages(acc, path, { limit = 50, search = '' } = {}) {
           { or: [{ subject: search }, { from: search }, { to: search }] },
           { uid: true }
         );
-        const uids = (found || []).slice(-limit);
+        if (!Array.isArray(found)) throw new Error('服务器未能完成搜索，请重试；当前仅显示本地缓存中的匹配邮件。');
+        // Some servers omit known matches. Re-fetch cached hits as well, so
+        // deleted messages and old UIDVALIDITY generations cannot reappear.
+        const saved = await cache.readList(acc.id, path, { limit, search });
+        const cachedUids = saved?.uidValidity === String(client.mailbox.uidValidity)
+          ? saved.messages.map((m) => m.uid) : [];
+        const uids = [...new Set([...found, ...cachedUids])].sort((a, b) => a - b).slice(-limit);
         items = uids.length ? await collect(acc, path, client, uids, { uid: true }) : [];
       } else {
         const start = Math.max(1, exists - limit + 1);
