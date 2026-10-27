@@ -141,17 +141,17 @@ async function showMessageMenu(event) {
 }
 
 async function showFolderMenu(event) {
-  const row = event.target.closest('.nav-item');
+  const row = event.target.closest('.nav-item, .nav-scope');
   const account = event.target.closest('[data-account]');
   if (!row && !account) return;
   event.preventDefault();
   const accId = row?.dataset.acc || account?.dataset.account;
   const folder = row?.dataset.path;
   const meta = folderMeta(accId, folder);
-  const remote = accId && folder && folder !== '@local-drafts';
+  const remote = accId && folder && !folder.startsWith('@');
   const custom = remote && meta && !meta.specialUse && folder.toUpperCase() !== 'INBOX';
   const menu = [{ id: 'refresh', label: '刷新' }];
-  if (remote || !accId) menu.push({ id: 'read', label: '全部标为已读' });
+  if (remote || !accId || folder === '@all') menu.push({ id: 'read', label: '全部标为已读' });
   if (accId) menu.push({ id: 'create', label: remote ? '新建子文件夹…' : '新建文件夹…' });
   if (custom) menu.push({ type: 'separator' }, { id: 'rename', label: '重命名…' }, { id: 'move', label: '移动文件夹到…' });
   const action = await call('menu:show', menu);
@@ -159,12 +159,8 @@ async function showFolderMenu(event) {
   try {
     if (action === 'refresh') { await refreshFolders(accId ? [accId] : undefined); await loadList(); return; }
     if (action === 'read') {
-      if (!accId) {
-        for (const account of S.accounts) await call('folder:read', account.id, 'INBOX');
-        await Promise.all([refreshFolders(), loadList()]);
-        return;
-      }
-      await call('folder:read', accId, folder);
+      const targets = scopeTargets({ accId: accId || null, path: folder || '@all' });
+      for (const t of targets) await call('folder:read', t.accId, t.path);
       if (S.sel.accId === accId && S.sel.path === folder) S.messages.forEach((m) => { m.seen = true; });
     } else if (action === 'move') {
       const delimiter = meta.delimiter || '/';

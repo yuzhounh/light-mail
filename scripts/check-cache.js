@@ -79,7 +79,8 @@ async function main() {
       },
     };
     vm.createContext(context);
-    vm.runInContext(listFunction + '\n' + bodyFunction, context);
+    const scopeFunctions = source.slice(source.indexOf('const COMMON_SCOPES'), source.indexOf('function trustedSenders()'));
+    vm.runInContext(scopeFunctions + '\n' + listFunction + '\n' + bodyFunction, context);
     const loading = context.loadList();
     await tick();
     assert.equal(context.S.messages[0].uid, 1, '缓存必须在网络请求完成之前显示');

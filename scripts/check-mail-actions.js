@@ -13,7 +13,7 @@ async function main() {
   const c = {
     S: { accounts: [{ id: 'a' }, { id: 'b' }], messages, selectedKeys: new Set(), anchorKey: null, cur: null },
     visibleMessages: () => c.S.messages, keyOf: (m) => `${m.accId}|${m.path}|${m.uid}`,
-    renderList() {}, renderReader() {}, closeMessage() {}, toast() {}, refreshFolders: async () => {}, loadList: async () => {},
+    renderList() {}, renderReader() {}, updateMessageSelection() {}, closeMessage() {}, toast() {}, refreshFolders: async () => {}, loadList: async () => {},
     accById: (id) => ({ email: `${id}@example.com` }),
     folderMeta: () => ({ specialUse: permanent ? '\\Trash' : '\\Inbox' }),
     confirm: () => false,
@@ -53,7 +53,7 @@ async function main() {
     messageFlagsAdd: async (...args) => events.push(['flags', ...args]),
   };
   const backend = {
-    getClient: async () => client, listFolders: async () => folders,
+    getClient: async () => client, listFolders: async () => folders, knownFolders: async () => folders, folderCache: new Map(),
     findFolder: async (_acc, special) => folders.find((f) => special.includes(f.specialUse))?.path || null,
     withMailbox: async (_acc, _folder, fn) => fn(client),
     cache: { updateMessages: async () => {}, readList: async () => null },

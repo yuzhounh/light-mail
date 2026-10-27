@@ -71,7 +71,7 @@ svg { flex: none; }
 }
 .acct-head .meta { min-width: 0; }
 .mailbox-icon { background: color-mix(in srgb, var(--mailbox-color) 12%, var(--panel)); color: color-mix(in srgb, var(--mailbox-color) 65%, var(--text)); }
-.mailbox-brand { color: var(--mailbox-color); }
+.mailbox-brand, .mailbox-aggregate { color: var(--mailbox-color); }
 .acct-head .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acct-head .mail { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .side-actions { padding: 0 10px; display: flex; flex-direction: column; gap: 2px; }
@@ -86,11 +86,15 @@ svg { flex: none; }
 .nav-group .sdot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .nav-group .sdot.online { background: #3fb950; }
 .nav-group .sdot.error, .nav-group .sdot.auth { background: var(--danger); }
-.nav-account { display: grid; grid-template-columns: 17px minmax(0, 1fr) auto; gap: 10px; }
-.nav-logo { position: relative; width: 17px; height: 17px; display: grid; place-items: center; align-self: start; margin-top: 2.5px; }
+.nav-account { display: grid; grid-template-columns: 17px minmax(0, 1fr) auto; align-items: center; gap: 10px; margin-top: 6px; padding: 8px 10px; }
+.nav-scope { cursor: pointer; border-radius: 8px; }
+.nav-scope:hover { background: var(--hover); }
+.nav-scope.active { background: var(--active); color: var(--text); }
+.nav-scope:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.nav-logo { position: relative; width: 17px; height: 17px; display: grid; place-items: center; align-self: start; margin-top: 1.5px; }
 .nav-logo .sdot { position: absolute; right: -3px; bottom: -3px; box-shadow: 0 0 0 1.5px var(--side); }
-.acct-gear { border: 0; background: transparent; color: var(--muted); padding: 2px; border-radius: 6px; display: grid; place-items: center; cursor: pointer; opacity: 0; pointer-events: none; }
-.nav-account:hover .acct-gear, .acct-head:hover .acct-gear, .acct-gear:focus-visible { opacity: 1; pointer-events: auto; }
+.acct-gear { width: 32px; height: 32px; flex: 0 0 32px; border: 0; background: transparent; color: var(--muted); padding: 0; border-radius: 8px; display: grid; place-items: center; cursor: pointer; opacity: 0; pointer-events: none; }
+.nav-account:hover .acct-gear, .acct-head:hover .acct-gear, .nav-account:focus-within .acct-gear, .acct-head:focus-within .acct-gear { opacity: 1; pointer-events: auto; }
 .acct-gear:hover { background: var(--hover); color: var(--text); }
 .acct-head .acct-gear { order: 3; margin-left: auto; }
 .acct-head .meta { order: 2; }
@@ -156,7 +160,7 @@ svg { flex: none; }
   cursor: default; margin: 0 6px; border-radius: 8px; border-bottom-color: transparent;
 }
 .row:hover { background: var(--hover); }
-.row.current { background: var(--hover); box-shadow: inset 3px 0 var(--accent); }
+.row.current { background: var(--hover); }
 .row.sel { background: var(--selection-bg); color: var(--selection-text); }
 .row .dot { position: absolute; left: 13px; top: 18px; width: 7px; height: 7px; border-radius: 50%; }
 .row.unread .dot { background: var(--accent); }

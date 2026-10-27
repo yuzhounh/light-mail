@@ -46,9 +46,13 @@ const listFile = (id, folder) => path.join(directory(id, folder), 'list.json');
 const bodyFile = (id, folder, uid) => path.join(directory(id, folder), `body-${hash(uid)}.json`);
 
 async function readList(id, folder, { limit = 50, search = '' } = {}) {
-  if (search) return null;
   const saved = await read(listFile(id, folder));
-  return saved && Array.isArray(saved.messages) ? { ...saved, messages: saved.messages.slice(0, limit) } : null;
+  if (!saved || !Array.isArray(saved.messages)) return null;
+  const term = search.toLowerCase();
+  const messages = term ? saved.messages.filter((m) => [m.subject, m.from?.name, m.from?.address,
+    ...(m.to || []).flatMap((a) => [a?.name, a?.address])]
+    .some((text) => (text || '').toLowerCase().includes(term))) : saved.messages;
+  return { ...saved, messages: messages.slice(0, limit) };
 }
 
 async function writeList(id, folder, result, uidValidity, { search = '' } = {}) {
